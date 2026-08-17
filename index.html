@@ -1,0 +1,558 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Monitor de Marcaje - CESFAM</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body {
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    min-height: 100vh;
+    padding: 16px;
+  }
+  .container { max-width: 900px; margin: 0 auto; }
+
+  .header {
+    background: white;
+    border-radius: 16px;
+    padding: 24px;
+    box-shadow: 0 8px 25px rgba(0,0,0,.15);
+    text-align: center;
+    margin-bottom: 20px;
+  }
+  .header h1 { color:#1f2937; font-size: 1.8em; margin-bottom: 4px; }
+  .header p { color:#6b7280; font-size: .95em; }
+
+  .card {
+    background: white;
+    border-radius: 16px;
+    padding: 24px;
+    box-shadow: 0 8px 25px rgba(0,0,0,.15);
+    margin-bottom: 20px;
+  }
+
+  .nav {
+    display:flex; align-items:center; justify-content:space-between;
+    margin-bottom: 20px; flex-wrap: wrap; gap: 10px;
+  }
+  .nav button {
+    background:#667eea; color:white; border:none; border-radius:10px;
+    padding: 10px 18px; font-weight:600; cursor:pointer; font-size:.95em;
+    transition: all .2s ease;
+  }
+  .nav button:hover { background:#5568d3; transform: translateY(-2px); }
+  .nav button:disabled { opacity:.5; cursor:not-allowed; transform:none; }
+  .nav .mes { font-size:1.4em; font-weight:700; color:#1f2937; text-transform:capitalize; }
+
+  .refresh-btn {
+    background:#10b981; color:white; border:none; border-radius:10px;
+    padding: 8px 16px; font-weight:600; cursor:pointer; font-size:.85em;
+  }
+  .refresh-btn:hover { background:#059669; }
+  .refresh-btn.gmail-btn { background:#ea4335; }
+  .refresh-btn.gmail-btn:hover { background:#d33426; }
+  .refresh-btn:disabled { opacity:.6; cursor:not-allowed; }
+
+  .estado-banner {
+    text-align:center; padding:10px; border-radius:10px; margin-bottom: 16px;
+    font-size:.9em; font-weight:600;
+  }
+  .estado-banner.cargando { background:#eff6ff; color:#1e40af; }
+  .estado-banner.error { background:#fee2e2; color:#991b1b; }
+  .estado-banner.ok { background:#d1fae5; color:#065f46; }
+
+  .stats-row {
+    display:grid; grid-template-columns: repeat(auto-fit, minmax(110px,1fr));
+    gap:10px; margin-bottom: 20px;
+  }
+  .stat {
+    background:#f9fafb; border-radius:10px; padding:12px; text-align:center;
+    border: 2px solid #e5e7eb;
+  }
+  .stat .num { font-size:1.6em; font-weight:800; color:#1f2937; }
+  .stat .lbl { font-size:.7em; color:#6b7280; text-transform:uppercase; letter-spacing:.5px; margin-top:2px; }
+
+  .semana-header {
+    display:grid; grid-template-columns: repeat(7,1fr); gap:6px; margin-bottom:6px;
+  }
+  .semana-header div {
+    text-align:center; font-weight:700; color:#6b7280; font-size:.75em;
+    text-transform:uppercase; letter-spacing:.5px; padding:6px 0;
+  }
+
+  .calendario {
+    display:grid; grid-template-columns: repeat(7,1fr); gap:6px;
+  }
+
+  .dia {
+    aspect-ratio: 1;
+    border-radius: 10px;
+    border: 2px solid #e5e7eb;
+    padding: 6px 4px;
+    display:flex; flex-direction:column; align-items:center; justify-content:center;
+    position: relative;
+    cursor:pointer;
+    transition: all .2s ease;
+    min-height: 68px;
+  }
+  .dia:hover { transform: translateY(-3px); box-shadow: 0 6px 14px rgba(0,0,0,.12); }
+  .dia.vacio { border-color: transparent; cursor:default; }
+  .dia.vacio:hover { transform:none; box-shadow:none; }
+  .dia.no-trackeado { background:#f9fafb; color:#c1c5cc; }
+  .dia.hoy { box-shadow: 0 0 0 3px #3b82f6 inset; }
+
+  .dia-numero { font-weight:700; font-size:.95em; margin-bottom:4px; }
+  .tickets { display:flex; gap:3px; }
+  .ticket {
+    width:14px; height:14px; border-radius:50%;
+    border: 1.5px solid rgba(0,0,0,.15);
+  }
+  .ticket.verde { background:#10b981; }
+  .ticket.rojo { background:#ef4444; }
+
+  .estrella {
+    position:absolute; top:2px; right:2px; font-size:.8em;
+  }
+
+  .leyenda {
+    margin-top: 20px; padding-top: 16px; border-top: 1px solid #e5e7eb;
+    display:grid; grid-template-columns: repeat(auto-fit,minmax(190px,1fr)); gap:10px;
+    font-size:.85em; color:#374151;
+  }
+  .leyenda-item { display:flex; align-items:center; gap:8px; }
+  .leyenda-tickets { display:flex; gap:3px; }
+
+  .detalle-panel {
+    display:none;
+    margin-top: 16px; padding: 16px; border-radius: 10px;
+    background:#f9fafb; border-left: 4px solid #667eea;
+  }
+  .detalle-panel h3 { color:#1f2937; margin-bottom:8px; font-size:1.05em; }
+  .detalle-panel p { color:#4b5563; font-size:.9em; margin-bottom:4px; }
+  .detalle-panel .cerrar {
+    float:right; cursor:pointer; color:#9ca3af; font-weight:700;
+  }
+
+  @media (max-width:600px){
+    .dia { min-height: 56px; }
+    .ticket { width:11px; height:11px; }
+    .nav .mes { font-size:1.15em; }
+  }
+</style>
+</head>
+<body>
+<div class="container">
+
+  <div class="header">
+    <h1>📊 Monitor de Marcaje</h1>
+    <p>CESFAM Quinta Bella · Conectado en vivo a Google Sheets</p>
+  </div>
+
+  <div class="card">
+    <div class="nav">
+      <button id="btnPrev" onclick="cambiarMes(-1)">← Anterior</button>
+      <div class="mes" id="mesLabel">Cargando...</div>
+      <button id="btnNext" onclick="cambiarMes(1)">Siguiente →</button>
+    </div>
+
+    <div style="text-align:center; margin-bottom:16px; display:flex; gap:10px; justify-content:center; flex-wrap:wrap;">
+      <button class="refresh-btn" onclick="cargarMes()">🔄 Actualizar vista</button>
+      <button class="refresh-btn gmail-btn" id="btnGmail" onclick="actualizarDesdeGmail()">📧 Buscar en Gmail ahora</button>
+    </div>
+
+    <div id="estadoBanner" class="estado-banner cargando">Cargando datos desde Google Sheets...</div>
+
+    <div class="stats-row" id="statsRow" style="display:none;">
+      <div class="stat"><div class="num" id="statCompleto">0</div><div class="lbl">Completos</div></div>
+      <div class="stat"><div class="num" id="statParcial">0</div><div class="lbl">Parciales</div></div>
+      <div class="stat"><div class="num" id="statFaltante">0</div><div class="lbl">Sin marcaje</div></div>
+      <div class="stat"><div class="num" id="statTurnos">0</div><div class="lbl">⭐ Turnos</div></div>
+    </div>
+
+    <div class="semana-header">
+      <div>Lun</div><div>Mar</div><div>Mié</div><div>Jue</div><div>Vie</div><div>Sáb</div><div>Dom</div>
+    </div>
+    <div class="calendario" id="calendario"></div>
+
+    <div class="leyenda">
+      <div class="leyenda-item">
+        <div class="leyenda-tickets"><div class="ticket verde"></div><div class="ticket verde"></div></div>
+        <span>Entrada + Salida OK</span>
+      </div>
+      <div class="leyenda-item">
+        <div class="leyenda-tickets"><div class="ticket verde"></div><div class="ticket rojo"></div></div>
+        <span>Solo entrada marcada</span>
+      </div>
+      <div class="leyenda-item">
+        <div class="leyenda-tickets"><div class="ticket rojo"></div><div class="ticket verde"></div></div>
+        <span>Solo salida marcada</span>
+      </div>
+      <div class="leyenda-item">
+        <div class="leyenda-tickets"><div class="ticket rojo"></div><div class="ticket rojo"></div></div>
+        <span>Sin marcaje</span>
+      </div>
+      <div class="leyenda-item">
+        <span style="font-size:1.1em;">⭐</span>
+        <span>Día de turno</span>
+      </div>
+      <div class="leyenda-item">
+        <div style="width:14px;height:14px;background:#f9fafb;border:2px solid #e5e7eb;border-radius:3px;"></div>
+        <span>No aplicaba marcaje</span>
+      </div>
+    </div>
+
+    <div class="detalle-panel" id="detallePanel">
+      <span class="cerrar" onclick="cerrarDetalle()">✕</span>
+      <h3 id="detalleTitulo"></h3>
+      <p id="detalleEntrada"></p>
+      <p id="detalleSalida"></p>
+      <p id="detalleTurno"></p>
+    </div>
+  </div>
+
+</div>
+
+<script>
+const SHEET_ID = '1HzqRTa0i5dEL4GB-4O-_cRI1yeVYw4Io_tyMMAfmdoc1HzqRTa0i5dEL4GB-4O-_cRI1yeVYw4Io_tyMMAfmdoc';
+const WEB_APP_URL = 'https://script.google.com/macros/s/AKfycbyX888Q3uXWMeLmHJJPdYkKwIzy7hy7anTHIOFnFK_IF6nH8vXjger4A1iP9B0BHQtY/exec';
+const MESES = ["Enero","Febrero","Marzo","Abril","Mayo","Junio","Julio","Agosto","Septiembre","Octubre","Noviembre","Diciembre"];
+const DIAS_SEMANA = ["Domingo","Lunes","Martes","Miércoles","Jueves","Viernes","Sábado"];
+
+let fechaVista = new Date(); // mes actualmente mostrado
+let datosMarcajes = {}; // { "DD/MM/YYYY": {entrada:bool, salida:bool, turno:bool} }
+let diasTrackeados = new Set(); // fechas que sí debían tener marcaje
+
+async function fetchSheetTable(sheetName) {
+  const url = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?tqx=out:json&sheet=${encodeURIComponent(sheetName)}`;
+  const res = await fetch(url);
+  if (!res.ok) throw new Error('No se pudo conectar a la planilla');
+  const text = await res.text();
+  const jsonStr = text.substring(text.indexOf('(') + 1, text.lastIndexOf(')'));
+  const data = JSON.parse(jsonStr);
+  if (data.status === 'error') {
+    const msg = (data.errors && data.errors[0] && data.errors[0].detailed_message) || 'Hoja no encontrada';
+    throw new Error(msg);
+  }
+  return data.table;
+}
+
+function filaAValores(tabla) {
+  if (!tabla || !tabla.rows) return [];
+  return tabla.rows.map(r => (r.c || []).map(c => (c ? c.v : null)));
+}
+
+function normalizarFecha(fechaStr) {
+  // Asegura formato DD/MM/YYYY con ceros adelante (ej: 3/8/2026 -> 03/08/2026)
+  if (!fechaStr) return fechaStr;
+  const partes = fechaStr.toString().trim().split('/');
+  if (partes.length !== 3) return fechaStr;
+  const dia = partes[0].padStart(2, '0');
+  const mes = partes[1].padStart(2, '0');
+  const año = partes[2];
+  return `${dia}/${mes}/${año}`;
+}
+
+function valorFechaCelda(v) {
+  // Google Sheets a veces convierte automáticamente el texto de fecha
+  // en un tipo interno "Date(...)" cuando la columna solo contiene fechas.
+  // Esta función detecta ese caso y lo convierte a DD/MM/YYYY normal.
+  if (v === null || v === undefined || v === '') return '';
+  
+  const str = v.toString().trim();
+  
+  if (str.startsWith('Date(')) {
+    const numeros = str.match(/-?\d+/g);
+    if (numeros && numeros.length >= 3) {
+      const año = parseInt(numeros[0]);
+      const mesIndex = parseInt(numeros[1]); // 0-indexado
+      const dia = parseInt(numeros[2]);
+      const diaPad = String(dia).padStart(2, '0');
+      const mesPad = String(mesIndex + 1).padStart(2, '0');
+      return `${diaPad}/${mesPad}/${año}`;
+    }
+  }
+  
+  return normalizarFecha(str);
+}
+
+async function cargarMes() {
+  const año = fechaVista.getFullYear();
+  const mesIdx = fechaVista.getMonth();
+  const nombreMes = MESES[mesIdx];
+
+  document.getElementById('mesLabel').textContent = `${nombreMes} ${año}`;
+  const banner = document.getElementById('estadoBanner');
+  banner.className = 'estado-banner cargando';
+  banner.textContent = 'Cargando datos desde Google Sheets...';
+  document.getElementById('statsRow').style.display = 'none';
+  document.getElementById('calendario').innerHTML = '';
+
+  datosMarcajes = {};
+  diasTrackeados = new Set();
+
+  const nombreHojaMarcajes = `Marcajes-${nombreMes}-${año}`;
+  const nombreHojaAlertas = `Alertas-${nombreMes}-${año}`;
+
+  let huboMarcajes = false;
+  let huboAlertas = false;
+
+  try {
+    const tablaMarcajes = await fetchSheetTable(nombreHojaMarcajes);
+    const filas = filaAValores(tablaMarcajes);
+    // Columnas: Fecha, Día Semana, Hora Entrada, Hora Salida, Estado Entrada, Estado Salida, Notas
+    filas.forEach(fila => {
+      const fecha = valorFechaCelda(fila[0]);
+      if (!fecha) return;
+      const estadoEntrada = (fila[4] || '').toString();
+      const estadoSalida = (fila[5] || '').toString();
+      const notas = (fila[6] || '').toString();
+      const horaEntrada = (fila[2] || '').toString().trim();
+      const horaSalida = (fila[3] || '').toString().trim();
+
+      datosMarcajes[fecha] = {
+        entrada: estadoEntrada.includes('Registrado'),
+        salida: estadoSalida.includes('Registrado'),
+        turno: notas.includes('TURNO'),
+        horaEntrada: horaEntrada,
+        horaSalida: horaSalida
+      };
+      diasTrackeados.add(fecha);
+    });
+    huboMarcajes = true;
+  } catch (e) {
+    console.log('Sin hoja de Marcajes para este mes:', e.message);
+  }
+
+  try {
+    const tablaAlertas = await fetchSheetTable(nombreHojaAlertas);
+    const filas = filaAValores(tablaAlertas);
+    // Columnas: Fecha Alerta, Tipo Alerta, Día, Tipo Marcaje Faltante, Acción
+    filas.forEach(fila => {
+      const tipoAlerta = (fila[1] || '').toString();
+      const diaCompleto = (fila[2] || '').toString(); // "12/08/2026 (Miércoles)"
+      const accion = (fila[4] || '').toString();
+      if (!diaCompleto) return;
+
+      const fecha = normalizarFecha(diaCompleto.split(' (')[0].trim());
+      diasTrackeados.add(fecha);
+
+      if (!datosMarcajes[fecha]) {
+        datosMarcajes[fecha] = { entrada: false, salida: false, turno: false, horaEntrada: '', horaSalida: '' };
+      }
+      if (tipoAlerta.includes('TURNO') || accion.includes('TURNO')) {
+        datosMarcajes[fecha].turno = true;
+      }
+    });
+    huboAlertas = true;
+  } catch (e) {
+    console.log('Sin hoja de Alertas para este mes:', e.message);
+  }
+
+  if (!huboMarcajes && !huboAlertas) {
+    banner.className = 'estado-banner error';
+    banner.textContent = `⚠️ No hay datos para ${nombreMes} ${año}. Aún no se ha ejecutado el script en ese mes.`;
+  } else {
+    banner.className = 'estado-banner ok';
+    const ahora = new Date();
+    banner.textContent = `✓ Datos actualizados · ${ahora.toLocaleTimeString('es-CL', {hour:'2-digit', minute:'2-digit'})}`;
+  }
+
+  renderizarCalendario(año, mesIdx);
+  renderizarStats();
+}
+
+function renderizarCalendario(año, mesIdx) {
+  const cal = document.getElementById('calendario');
+  cal.innerHTML = '';
+
+  const primerDiaSemana = new Date(año, mesIdx, 1).getDay(); // 0=Dom
+  const offset = primerDiaSemana === 0 ? 6 : primerDiaSemana - 1; // convertir a Lun=0
+  const diasEnMes = new Date(año, mesIdx + 1, 0).getDate();
+
+  const hoy = new Date();
+  const esMesActual = hoy.getFullYear() === año && hoy.getMonth() === mesIdx;
+
+  for (let i = 0; i < offset; i++) {
+    const vacio = document.createElement('div');
+    vacio.className = 'dia vacio';
+    cal.appendChild(vacio);
+  }
+
+  for (let dia = 1; dia <= diasEnMes; dia++) {
+    const fechaStr = `${String(dia).padStart(2,'0')}/${String(mesIdx+1).padStart(2,'0')}/${año}`;
+    const div = document.createElement('div');
+    div.className = 'dia';
+
+    if (esMesActual && dia === hoy.getDate()) {
+      div.classList.add('hoy');
+    }
+
+    const info = datosMarcajes[fechaStr];
+    const trackeado = diasTrackeados.has(fechaStr);
+
+    const numero = document.createElement('div');
+    numero.className = 'dia-numero';
+    numero.textContent = dia;
+    div.appendChild(numero);
+
+    if (trackeado) {
+      const tickets = document.createElement('div');
+      tickets.className = 'tickets';
+
+      const t1 = document.createElement('div');
+      t1.className = 'ticket ' + (info.entrada ? 'verde' : 'rojo');
+      const t2 = document.createElement('div');
+      t2.className = 'ticket ' + (info.salida ? 'verde' : 'rojo');
+
+      tickets.appendChild(t1);
+      tickets.appendChild(t2);
+      div.appendChild(tickets);
+
+      if (info.turno) {
+        const estrella = document.createElement('div');
+        estrella.className = 'estrella';
+        estrella.textContent = '⭐';
+        div.appendChild(estrella);
+      }
+
+      div.onclick = () => mostrarDetalle(fechaStr, info);
+    } else {
+      div.classList.add('no-trackeado');
+    }
+
+    cal.appendChild(div);
+  }
+}
+
+function renderizarStats() {
+  let completo = 0, parcial = 0, faltante = 0, turnos = 0;
+
+  diasTrackeados.forEach(fecha => {
+    const info = datosMarcajes[fecha];
+    if (!info) return;
+    if (info.entrada && info.salida) completo++;
+    else if (info.entrada || info.salida) parcial++;
+    else faltante++;
+    if (info.turno) turnos++;
+  });
+
+  document.getElementById('statCompleto').textContent = completo;
+  document.getElementById('statParcial').textContent = parcial;
+  document.getElementById('statFaltante').textContent = faltante;
+  document.getElementById('statTurnos').textContent = turnos;
+  document.getElementById('statsRow').style.display = 'grid';
+}
+
+function mostrarDetalle(fecha, info) {
+  const panel = document.getElementById('detallePanel');
+  const [d, m, a] = fecha.split('/');
+  const fechaObj = new Date(a, m - 1, d);
+  const nombreDia = DIAS_SEMANA[fechaObj.getDay()];
+
+  const textoEntrada = info.entrada
+    ? `✓ Registrada${info.horaEntrada ? ' a las ' + info.horaEntrada : ''}`
+    : '❌ Faltante';
+  const textoSalida = info.salida
+    ? `✓ Registrada${info.horaSalida ? ' a las ' + info.horaSalida : ''}`
+    : '❌ Faltante';
+
+  document.getElementById('detalleTitulo').textContent = `📅 ${fecha} - ${nombreDia}`;
+  document.getElementById('detalleEntrada').textContent = `Entrada: ${textoEntrada}`;
+  document.getElementById('detalleSalida').textContent = `Salida: ${textoSalida}`;
+  document.getElementById('detalleTurno').textContent = info.turno ? '⭐ Día de turno' : 'Día normal (sin turno)';
+
+  panel.style.display = 'block';
+}
+
+function cerrarDetalle() {
+  document.getElementById('detallePanel').style.display = 'none';
+}
+
+function llamarWebAppJSONP(url) {
+  return new Promise((resolve, reject) => {
+    const callbackName = 'jsonpCallback_' + Date.now() + '_' + Math.floor(Math.random() * 10000);
+    const script = document.createElement('script');
+    let finalizado = false;
+
+    function limpiar() {
+      delete window[callbackName];
+      if (script.parentNode) script.parentNode.removeChild(script);
+    }
+
+    window[callbackName] = function(data) {
+      finalizado = true;
+      limpiar();
+      resolve(data);
+    };
+
+    script.onerror = function() {
+      if (!finalizado) {
+        finalizado = true;
+        limpiar();
+        reject(new Error('No se pudo cargar el script (revisa que el Web App esté publicado)'));
+      }
+    };
+
+    script.src = `${url}${url.includes('?') ? '&' : '?'}callback=${callbackName}`;
+    document.body.appendChild(script);
+
+    // Timeout de seguridad: la búsqueda en Gmail puede tardar
+    setTimeout(() => {
+      if (!finalizado) {
+        finalizado = true;
+        limpiar();
+        reject(new Error('Tiempo de espera agotado (60s). El script puede seguir corriendo en segundo plano.'));
+      }
+    }, 60000);
+  });
+}
+
+async function actualizarDesdeGmail() {
+  if (WEB_APP_URL.startsWith('PEGA_AQUI') || !WEB_APP_URL) {
+    alert('⚠️ Falta configurar la URL del Web App.\n\nRevisa las instrucciones para publicar el script como Web App y pega la URL en el código (constante WEB_APP_URL).');
+    return;
+  }
+
+  const btn = document.getElementById('btnGmail');
+  const banner = document.getElementById('estadoBanner');
+
+  btn.disabled = true;
+  btn.textContent = '⏳ Buscando en Gmail...';
+  banner.className = 'estado-banner cargando';
+  banner.textContent = 'Buscando nuevos correos de marcaje en Gmail... esto puede tardar unos segundos.';
+
+  try {
+    const data = await llamarWebAppJSONP(`${WEB_APP_URL}?accion=actualizar`);
+
+    if (data.success) {
+      banner.className = 'estado-banner ok';
+      banner.textContent = '✓ Búsqueda en Gmail completada. Recargando calendario...';
+      await cargarMes();
+    } else {
+      banner.className = 'estado-banner error';
+      banner.textContent = '⚠️ ' + (data.mensaje || 'Error al actualizar');
+    }
+  } catch (e) {
+    banner.className = 'estado-banner error';
+    banner.textContent = '⚠️ ' + e.message;
+    console.error(e);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '📧 Buscar en Gmail ahora';
+  }
+}
+
+function cambiarMes(delta) {
+  cerrarDetalle();
+  fechaVista.setDate(1); // evitar overflow de días
+  fechaVista.setMonth(fechaVista.getMonth() + delta);
+  cargarMes();
+}
+
+// Inicializar
+cargarMes();
+</script>
+</body>
+</html>
