@@ -225,7 +225,7 @@ let datosMarcajes = {}; // { "DD/MM/YYYY": {entrada:bool, salida:bool, turno:boo
 let diasTrackeados = new Set(); // fechas que sí debían tener marcaje
 
 async function fetchSheetTable(sheetName) {
-  const url = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?tqx=out:json&sheet=${encodeURIComponent(sheetName)}`;
+  const url = `https://docs.google.com/spreadsheets/d/1HzqRTa0i5dEL4GB-4O-_cRI1yeVYw4Io_tyMMAfmdoc/gviz/tq?tqx=out:json&sheet=${encodeURIComponent(sheetName)}`;
   const res = await fetch(url);
   if (!res.ok) throw new Error('No se pudo conectar a la planilla');
   const text = await res.text();
