@@ -2,17 +2,25 @@
 <html lang="es">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>Monitor de Marcaje - CESFAM</title>
 <style>
   * { margin:0; padding:0; box-sizing:border-box; }
+  html, body {
+    overflow-x: hidden;
+    width: 100%;
+  }
   body {
     font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
     background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
     min-height: 100vh;
     padding: 16px;
+    padding-top: max(16px, env(safe-area-inset-top));
+    padding-bottom: max(16px, env(safe-area-inset-bottom));
+    padding-left: max(16px, env(safe-area-inset-left));
+    padding-right: max(16px, env(safe-area-inset-right));
   }
-  .container { max-width: 900px; margin: 0 auto; }
+  .container { max-width: 900px; margin: 0 auto; width: 100%; }
 
   .header {
     background: white;
@@ -31,7 +39,10 @@
     padding: 24px;
     box-shadow: 0 8px 25px rgba(0,0,0,.15);
     margin-bottom: 20px;
+    overflow: hidden;
   }
+  .card h2 { color:#1f2937; font-size:1.2em; margin-bottom:16px; }
+  .card h2 .anio-chip { color:#9ca3af; font-weight:400; font-size:.7em; }
 
   .nav {
     display:flex; align-items:center; justify-content:space-between;
@@ -70,24 +81,28 @@
   .stat {
     background:#f9fafb; border-radius:10px; padding:12px; text-align:center;
     border: 2px solid #e5e7eb;
+    min-width: 0;
   }
   .stat .num { font-size:1.6em; font-weight:800; color:#1f2937; }
   .stat .lbl { font-size:.7em; color:#6b7280; text-transform:uppercase; letter-spacing:.5px; margin-top:2px; }
 
   .semana-header {
-    display:grid; grid-template-columns: repeat(7,1fr); gap:6px; margin-bottom:6px;
+    display:grid; grid-template-columns: repeat(7, minmax(0,1fr)); gap:6px; margin-bottom:6px;
   }
   .semana-header div {
     text-align:center; font-weight:700; color:#6b7280; font-size:.75em;
     text-transform:uppercase; letter-spacing:.5px; padding:6px 0;
+    min-width: 0;
   }
 
   .calendario {
-    display:grid; grid-template-columns: repeat(7,1fr); gap:6px;
+    display:grid; grid-template-columns: repeat(7, minmax(0,1fr)); gap:6px;
   }
 
   .dia {
     aspect-ratio: 1;
+    min-width: 0;
+    min-height: 0;
     border-radius: 10px;
     border: 2px solid #e5e7eb;
     padding: 6px 4px;
@@ -95,19 +110,20 @@
     position: relative;
     cursor:pointer;
     transition: all .2s ease;
-    min-height: 68px;
   }
   .dia:hover { transform: translateY(-3px); box-shadow: 0 6px 14px rgba(0,0,0,.12); }
   .dia.vacio { border-color: transparent; cursor:default; }
   .dia.vacio:hover { transform:none; box-shadow:none; }
   .dia.no-trackeado { background:#f9fafb; color:#c1c5cc; }
+  .dia.feriado { background:#fef3c7; color:#92400e; border-color:#fde68a; cursor:pointer; }
   .dia.hoy { box-shadow: 0 0 0 3px #3b82f6 inset; }
 
-  .dia-numero { font-weight:700; font-size:.95em; margin-bottom:4px; }
+  .dia-numero { font-weight:700; font-size:clamp(.75em,3vw,.95em); margin-bottom:4px; }
   .tickets { display:flex; gap:3px; }
   .ticket {
     width:14px; height:14px; border-radius:50%;
     border: 1.5px solid rgba(0,0,0,.15);
+    flex-shrink: 0;
   }
   .ticket.verde { background:#10b981; }
   .ticket.rojo { background:#ef4444; }
@@ -121,8 +137,8 @@
     display:grid; grid-template-columns: repeat(auto-fit,minmax(190px,1fr)); gap:10px;
     font-size:.85em; color:#374151;
   }
-  .leyenda-item { display:flex; align-items:center; gap:8px; }
-  .leyenda-tickets { display:flex; gap:3px; }
+  .leyenda-item { display:flex; align-items:center; gap:8px; min-width: 0; }
+  .leyenda-tickets { display:flex; gap:3px; flex-shrink: 0; }
 
   .detalle-panel {
     display:none;
@@ -135,10 +151,25 @@
     float:right; cursor:pointer; color:#9ca3af; font-weight:700;
   }
 
+  .form-solicitud { display:flex; flex-direction:column; gap:12px; margin-top: 6px; }
+  .form-fila { display:flex; gap:10px; flex-wrap:wrap; }
+  .form-campo { flex:1; min-width:140px; font-size:.85em; color:#374151; }
+  .form-campo select, .form-campo input {
+    width:100%; padding:9px 10px; border-radius:8px; border:1.5px solid #e5e7eb;
+    margin-top:4px; font-size:.9em; font-family:inherit;
+  }
+  .form-campo select:focus, .form-campo input:focus { outline:none; border-color:#667eea; }
+
   @media (max-width:600px){
-    .dia { min-height: 56px; }
+    .dia { min-height: 0; }
     .ticket { width:11px; height:11px; }
     .nav .mes { font-size:1.15em; }
+    .card { padding: 16px; }
+  }
+
+  @media (max-width:360px){
+    .ticket { width:9px; height:9px; }
+    .dia { padding: 4px 2px; }
   }
 </style>
 </head>
@@ -198,7 +229,11 @@
         <span>Día de turno</span>
       </div>
       <div class="leyenda-item">
-        <div style="width:14px;height:14px;background:#f9fafb;border:2px solid #e5e7eb;border-radius:3px;"></div>
+        <span style="font-size:1.1em;">🎉</span>
+        <span>Feriado</span>
+      </div>
+      <div class="leyenda-item">
+        <div style="width:14px;height:14px;background:#f9fafb;border:2px solid #e5e7eb;border-radius:3px;flex-shrink:0;"></div>
         <span>No aplicaba marcaje</span>
       </div>
     </div>
@@ -212,20 +247,67 @@
     </div>
   </div>
 
+  <div class="card">
+    <h2>📋 Saldos y Solicitudes <span class="anio-chip" id="saldosAnio"></span></h2>
+
+    <div class="stats-row" style="grid-template-columns: repeat(2,1fr);">
+      <div class="stat"><div class="num" id="saldoAdminNum">–</div><div class="lbl">Días administrativos restantes</div></div>
+      <div class="stat"><div class="num" id="saldoVacNum">–</div><div class="lbl">Vacaciones disponibles</div></div>
+    </div>
+
+    <div id="saldosBanner" class="estado-banner" style="display:none; margin-top:16px;"></div>
+
+    <form class="form-solicitud" id="formSolicitud" onsubmit="return enviarSolicitud(event)">
+      <div class="form-fila">
+        <label class="form-campo">
+          Tipo
+          <select id="solTipo" onchange="actualizarCamposSolicitud()">
+            <option value="Administrativo">Día administrativo</option>
+            <option value="Vacaciones">Vacaciones</option>
+          </select>
+        </label>
+        <label class="form-campo" id="labelFraccion">
+          Fracción
+          <select id="solFraccion">
+            <option value="Día completo">Día completo</option>
+            <option value="Medio día (Mañana)">Medio día (Mañana)</option>
+            <option value="Medio día (Tarde)">Medio día (Tarde)</option>
+          </select>
+        </label>
+      </div>
+      <div class="form-fila">
+        <label class="form-campo">
+          Fecha inicio
+          <input type="date" id="solFechaInicio" required>
+        </label>
+        <label class="form-campo">
+          Fecha fin
+          <input type="date" id="solFechaFin">
+        </label>
+      </div>
+      <label class="form-campo">
+        Notas (opcional)
+        <input type="text" id="solNotas" placeholder="Ej: control médico">
+      </label>
+      <button type="submit" class="refresh-btn" id="btnSolicitar" style="align-self:flex-start;">📩 Registrar solicitud</button>
+    </form>
+  </div>
+
 </div>
 
 <script>
-const SHEET_ID = '1HzqRTa0i5dEL4GB-4O-_cRI1yeVYw4Io_tyMMAfmdoc1HzqRTa0i5dEL4GB-4O-_cRI1yeVYw4Io_tyMMAfmdoc';
 const WEB_APP_URL = 'https://script.google.com/macros/s/AKfycbyX888Q3uXWMeLmHJJPdYkKwIzy7hy7anTHIOFnFK_IF6nH8vXjger4A1iP9B0BHQtY/exec';
+const SHEET_URL_ID = '1HzqRTa0i5dEL4GB-4O-_cRI1yeVYw4Io_tyMMAfmdoc';
 const MESES = ["Enero","Febrero","Marzo","Abril","Mayo","Junio","Julio","Agosto","Septiembre","Octubre","Noviembre","Diciembre"];
 const DIAS_SEMANA = ["Domingo","Lunes","Martes","Miércoles","Jueves","Viernes","Sábado"];
 
 let fechaVista = new Date(); // mes actualmente mostrado
 let datosMarcajes = {}; // { "DD/MM/YYYY": {entrada:bool, salida:bool, turno:bool} }
 let diasTrackeados = new Set(); // fechas que sí debían tener marcaje
+let feriadosMap = new Map(); // "DD/MM/YYYY" -> descripción
 
 async function fetchSheetTable(sheetName) {
-  const url = `https://docs.google.com/spreadsheets/d/1HzqRTa0i5dEL4GB-4O-_cRI1yeVYw4Io_tyMMAfmdoc/gviz/tq?tqx=out:json&sheet=${encodeURIComponent(sheetName)}`;
+  const url = `https://docs.google.com/spreadsheets/d/${SHEET_URL_ID}/gviz/tq?tqx=out:json&sheet=${encodeURIComponent(sheetName)}`;
   const res = await fetch(url);
   if (!res.ok) throw new Error('No se pudo conectar a la planilla');
   const text = await res.text();
@@ -244,7 +326,6 @@ function filaAValores(tabla) {
 }
 
 function normalizarFecha(fechaStr) {
-  // Asegura formato DD/MM/YYYY con ceros adelante (ej: 3/8/2026 -> 03/08/2026)
   if (!fechaStr) return fechaStr;
   const partes = fechaStr.toString().trim().split('/');
   if (partes.length !== 3) return fechaStr;
@@ -255,26 +336,35 @@ function normalizarFecha(fechaStr) {
 }
 
 function valorFechaCelda(v) {
-  // Google Sheets a veces convierte automáticamente el texto de fecha
-  // en un tipo interno "Date(...)" cuando la columna solo contiene fechas.
-  // Esta función detecta ese caso y lo convierte a DD/MM/YYYY normal.
   if (v === null || v === undefined || v === '') return '';
-  
   const str = v.toString().trim();
-  
   if (str.startsWith('Date(')) {
     const numeros = str.match(/-?\d+/g);
     if (numeros && numeros.length >= 3) {
       const año = parseInt(numeros[0]);
-      const mesIndex = parseInt(numeros[1]); // 0-indexado
+      const mesIndex = parseInt(numeros[1]);
       const dia = parseInt(numeros[2]);
       const diaPad = String(dia).padStart(2, '0');
       const mesPad = String(mesIndex + 1).padStart(2, '0');
       return `${diaPad}/${mesPad}/${año}`;
     }
   }
-  
   return normalizarFecha(str);
+}
+
+async function cargarFeriados() {
+  feriadosMap = new Map();
+  try {
+    const tabla = await fetchSheetTable('Feriados');
+    const filas = filaAValores(tabla);
+    filas.forEach(fila => {
+      const fecha = valorFechaCelda(fila[0]);
+      const desc = (fila[1] || '').toString();
+      if (fecha) feriadosMap.set(fecha, desc);
+    });
+  } catch (e) {
+    console.log('Sin hoja de Feriados todavía (presiona "Buscar en Gmail ahora" una vez para generarla):', e.message);
+  }
 }
 
 async function cargarMes() {
@@ -298,10 +388,11 @@ async function cargarMes() {
   let huboMarcajes = false;
   let huboAlertas = false;
 
+  await cargarFeriados();
+
   try {
     const tablaMarcajes = await fetchSheetTable(nombreHojaMarcajes);
     const filas = filaAValores(tablaMarcajes);
-    // Columnas: Fecha, Día Semana, Hora Entrada, Hora Salida, Estado Entrada, Estado Salida, Notas
     filas.forEach(fila => {
       const fecha = valorFechaCelda(fila[0]);
       if (!fecha) return;
@@ -328,10 +419,9 @@ async function cargarMes() {
   try {
     const tablaAlertas = await fetchSheetTable(nombreHojaAlertas);
     const filas = filaAValores(tablaAlertas);
-    // Columnas: Fecha Alerta, Tipo Alerta, Día, Tipo Marcaje Faltante, Acción
     filas.forEach(fila => {
       const tipoAlerta = (fila[1] || '').toString();
-      const diaCompleto = (fila[2] || '').toString(); // "12/08/2026 (Miércoles)"
+      const diaCompleto = (fila[2] || '').toString();
       const accion = (fila[4] || '').toString();
       if (!diaCompleto) return;
 
@@ -361,14 +451,15 @@ async function cargarMes() {
 
   renderizarCalendario(año, mesIdx);
   renderizarStats();
+  cargarSaldos(año);
 }
 
 function renderizarCalendario(año, mesIdx) {
   const cal = document.getElementById('calendario');
   cal.innerHTML = '';
 
-  const primerDiaSemana = new Date(año, mesIdx, 1).getDay(); // 0=Dom
-  const offset = primerDiaSemana === 0 ? 6 : primerDiaSemana - 1; // convertir a Lun=0
+  const primerDiaSemana = new Date(año, mesIdx, 1).getDay();
+  const offset = primerDiaSemana === 0 ? 6 : primerDiaSemana - 1;
   const diasEnMes = new Date(año, mesIdx + 1, 0).getDate();
 
   const hoy = new Date();
@@ -420,6 +511,15 @@ function renderizarCalendario(año, mesIdx) {
       div.onclick = () => mostrarDetalle(fechaStr, info);
     } else {
       div.classList.add('no-trackeado');
+      const descFeriado = feriadosMap.get(fechaStr);
+      if (descFeriado) {
+        div.classList.add('feriado');
+        const marca = document.createElement('div');
+        marca.className = 'estrella';
+        marca.textContent = '🎉';
+        div.appendChild(marca);
+        div.onclick = () => mostrarDetalleFeriado(fechaStr, descFeriado);
+      }
     }
 
     cal.appendChild(div);
@@ -466,6 +566,15 @@ function mostrarDetalle(fecha, info) {
   panel.style.display = 'block';
 }
 
+function mostrarDetalleFeriado(fecha, desc) {
+  const panel = document.getElementById('detallePanel');
+  document.getElementById('detalleTitulo').textContent = `🎉 ${fecha}`;
+  document.getElementById('detalleEntrada').textContent = `Feriado: ${desc}`;
+  document.getElementById('detalleSalida').textContent = '';
+  document.getElementById('detalleTurno').textContent = 'No aplicaba marcaje.';
+  panel.style.display = 'block';
+}
+
 function cerrarDetalle() {
   document.getElementById('detallePanel').style.display = 'none';
 }
@@ -498,7 +607,6 @@ function llamarWebAppJSONP(url) {
     script.src = `${url}${url.includes('?') ? '&' : '?'}callback=${callbackName}`;
     document.body.appendChild(script);
 
-    // Timeout de seguridad: la búsqueda en Gmail puede tardar
     setTimeout(() => {
       if (!finalizado) {
         finalizado = true;
@@ -528,7 +636,7 @@ async function actualizarDesdeGmail() {
 
     if (data.success) {
       banner.className = 'estado-banner ok';
-      banner.textContent = '✓ Búsqueda en Gmail completada. Recargando calendario...';
+      banner.textContent = '✓ ' + (data.mensaje || 'Búsqueda en Gmail completada.') + ' Recargando calendario...';
       await cargarMes();
     } else {
       banner.className = 'estado-banner error';
@@ -544,14 +652,101 @@ async function actualizarDesdeGmail() {
   }
 }
 
+async function cargarSaldos(anio) {
+  document.getElementById('saldosAnio').textContent = `(${anio})`;
+  const banner = document.getElementById('saldosBanner');
+  banner.style.display = 'none';
+
+  if (WEB_APP_URL.startsWith('PEGA_AQUI') || !WEB_APP_URL) return;
+
+  try {
+    const data = await llamarWebAppJSONP(`${WEB_APP_URL}?accion=saldos&anio=${anio}`);
+    if (data.success) {
+      document.getElementById('saldoAdminNum').textContent = data.admin;
+      document.getElementById('saldoVacNum').textContent = data.vacaciones;
+    }
+  } catch (e) {
+    document.getElementById('saldoAdminNum').textContent = '–';
+    document.getElementById('saldoVacNum').textContent = '–';
+    banner.className = 'estado-banner error';
+    banner.textContent = '⚠️ No se pudo cargar el saldo: ' + e.message;
+    banner.style.display = 'block';
+  }
+}
+
+function actualizarCamposSolicitud() {
+  const tipo = document.getElementById('solTipo').value;
+  document.getElementById('labelFraccion').style.display = tipo === 'Administrativo' ? 'block' : 'none';
+}
+
+function isoADDMMYYYY(iso) {
+  if (!iso) return '';
+  const [y, m, d] = iso.split('-');
+  return `${d}/${m}/${y}`;
+}
+
+async function enviarSolicitud(event) {
+  event.preventDefault();
+
+  const btn = document.getElementById('btnSolicitar');
+  const banner = document.getElementById('saldosBanner');
+
+  const tipo = document.getElementById('solTipo').value;
+  const fraccionSel = document.getElementById('solFraccion').value;
+  const fechaInicioRaw = document.getElementById('solFechaInicio').value;
+  const fechaFinRaw = document.getElementById('solFechaFin').value || fechaInicioRaw;
+  const notas = document.getElementById('solNotas').value;
+
+  if (!fechaInicioRaw) {
+    alert('Selecciona una fecha de inicio.');
+    return false;
+  }
+
+  const fechaInicio = isoADDMMYYYY(fechaInicioRaw);
+  const fechaFin = isoADDMMYYYY(fechaFinRaw);
+  const fraccion = tipo === 'Administrativo' ? fraccionSel : 'Día completo';
+
+  btn.disabled = true;
+  btn.textContent = '⏳ Enviando...';
+  banner.style.display = 'block';
+  banner.className = 'estado-banner cargando';
+  banner.textContent = 'Registrando solicitud...';
+
+  try {
+    const params = new URLSearchParams({ accion: 'solicitar', tipo, fechaInicio, fechaFin, fraccion, notas });
+    const data = await llamarWebAppJSONP(`${WEB_APP_URL}?${params.toString()}`);
+
+    if (data.success) {
+      banner.className = 'estado-banner ok';
+      banner.textContent = '✓ ' + data.mensaje;
+      document.getElementById('saldoAdminNum').textContent = data.saldoAdmin;
+      document.getElementById('saldoVacNum').textContent = data.saldoVacaciones;
+      document.getElementById('formSolicitud').reset();
+      actualizarCamposSolicitud();
+    } else {
+      banner.className = 'estado-banner error';
+      banner.textContent = '⚠️ ' + (data.mensaje || 'Error al registrar la solicitud');
+    }
+  } catch (e) {
+    banner.className = 'estado-banner error';
+    banner.textContent = '⚠️ ' + e.message;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '📩 Registrar solicitud';
+  }
+
+  return false;
+}
+
 function cambiarMes(delta) {
   cerrarDetalle();
-  fechaVista.setDate(1); // evitar overflow de días
+  fechaVista.setDate(1);
   fechaVista.setMonth(fechaVista.getMonth() + delta);
   cargarMes();
 }
 
 // Inicializar
+actualizarCamposSolicitud();
 cargarMes();
 </script>
 </body>
