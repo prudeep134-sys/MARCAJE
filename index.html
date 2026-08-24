@@ -210,7 +210,7 @@
     <div class="leyenda">
       <div class="leyenda-item">
         <div class="leyenda-tickets"><div class="ticket verde"></div><div class="ticket verde"></div></div>
-        <span>Entrada + Salida OK</span>
+        <span>Jornada: Entrada + Salida OK</span>
       </div>
       <div class="leyenda-item">
         <div class="leyenda-tickets"><div class="ticket verde"></div><div class="ticket rojo"></div></div>
@@ -226,7 +226,7 @@
       </div>
       <div class="leyenda-item">
         <span style="font-size:1.1em;">⭐</span>
-        <span>Día de turno</span>
+        <span>Día con turno (toca el día para ver detalle)</span>
       </div>
       <div class="leyenda-item">
         <span style="font-size:1.1em;">🎉</span>
@@ -293,18 +293,38 @@
     </form>
   </div>
 
+  <div class="card">
+    <h2>🩺 Licencias Médicas</h2>
+    <div id="licenciaBanner" class="estado-banner" style="display:none; margin-bottom:16px;"></div>
+    <form class="form-solicitud" id="formLicencia" onsubmit="return enviarLicencia(event)">
+      <div class="form-fila">
+        <label class="form-campo">
+          Fecha inicio
+          <input type="date" id="licFechaInicio" required>
+        </label>
+        <label class="form-campo">
+          Fecha fin
+          <input type="date" id="licFechaFin">
+        </label>
+      </div>
+      <button type="submit" class="refresh-btn" id="btnLicencia" style="align-self:flex-start; background:#0891b2;">🩺 Registrar licencia</button>
+    </form>
+  </div>
+
 </div>
 
 <script>
 const WEB_APP_URL = 'https://script.google.com/macros/s/AKfycbyX888Q3uXWMeLmHJJPdYkKwIzy7hy7anTHIOFnFK_IF6nH8vXjger4A1iP9B0BHQtY/exec';
+const KIKA_WEB_APP_URL = 'https://script.google.com/macros/s/AKfycby7BGMRpxMTP2wWouFvR5Acy-he_QoPdvCYz9TjoJJhy94l2_BWpKjWHvOPs0qz9nGP/exec'; // Web App de "Horas Extras KIKA" — solo lectura
 const SHEET_URL_ID = '1HzqRTa0i5dEL4GB-4O-_cRI1yeVYw4Io_tyMMAfmdoc';
 const MESES = ["Enero","Febrero","Marzo","Abril","Mayo","Junio","Julio","Agosto","Septiembre","Octubre","Noviembre","Diciembre"];
 const DIAS_SEMANA = ["Domingo","Lunes","Martes","Miércoles","Jueves","Viernes","Sábado"];
 
 let fechaVista = new Date(); // mes actualmente mostrado
-let datosMarcajes = {}; // { "DD/MM/YYYY": {entrada:bool, salida:bool, turno:bool} }
+let datosMarcajes = {}; // { "DD/MM/YYYY": {entrada,salida,turno,tipoTurno,horasTurno,horaEntrada,horaSalida,horaEntradaTurno,horaSalidaTurno} }
 let diasTrackeados = new Set(); // fechas que sí debían tener marcaje
 let feriadosMap = new Map(); // "DD/MM/YYYY" -> descripción
+let turnoDatesSet = new Set(); // "DD/MM/YYYY" de días de turno según Horas Extras (KIKA) - respaldo si no llegó correo
 
 async function fetchSheetTable(sheetName) {
   const url = `https://docs.google.com/spreadsheets/d/${SHEET_URL_ID}/gviz/tq?tqx=out:json&sheet=${encodeURIComponent(sheetName)}`;
@@ -367,6 +387,33 @@ async function cargarFeriados() {
   }
 }
 
+/**
+ * Trae TODOS los turnos guardados en "Horas Extras KIKA" (solo lectura, un solo
+ * fetch trae todo el historial). Se usa como respaldo del calendario: si un día
+ * tiene turno en KIKA pero por algún motivo no llegó/no se detectó el correo de
+ * marcaje correspondiente, igual se marca para que se note que falta el correo.
+ * El detalle "Tipo Turno" real (Extra Lun-Jue, Sábado SAR, etc.) siempre viene
+ * primero desde la hoja de Marcajes, que es donde Code.gs lo clasifica.
+ */
+async function cargarTurnosKika() {
+  turnoDatesSet = new Set();
+  if (!KIKA_WEB_APP_URL || KIKA_WEB_APP_URL.startsWith('PEGA_AQUI')) return;
+
+  try {
+    const data = await llamarWebAppJSONP(KIKA_WEB_APP_URL);
+    Object.keys(data).forEach(mesKey => {
+      if (mesKey === '_config') return;
+      (data[mesKey] || []).forEach(registro => {
+        if (!registro || !registro.fecha) return;
+        const [y, m, d] = registro.fecha.split('-');
+        if (y && m && d) turnoDatesSet.add(`${d}/${m}/${y}`);
+      });
+    });
+  } catch (e) {
+    console.log('No se pudo cargar Horas Extras (KIKA):', e.message);
+  }
+}
+
 async function cargarMes() {
   const año = fechaVista.getFullYear();
   const mesIdx = fechaVista.getMonth();
@@ -393,21 +440,32 @@ async function cargarMes() {
   try {
     const tablaMarcajes = await fetchSheetTable(nombreHojaMarcajes);
     const filas = filaAValores(tablaMarcajes);
+    // Columnas: Fecha, Día Semana, HoraEntradaJornada, HoraSalidaJornada, EstadoEntradaJornada, EstadoSalidaJornada,
+    //           HoraEntradaTurno, HoraSalidaTurno, EstadoEntradaTurno, EstadoSalidaTurno, TipoTurno, HorasTurno, Notas
     filas.forEach(fila => {
       const fecha = valorFechaCelda(fila[0]);
       if (!fecha) return;
+
       const estadoEntrada = (fila[4] || '').toString();
       const estadoSalida = (fila[5] || '').toString();
-      const notas = (fila[6] || '').toString();
       const horaEntrada = (fila[2] || '').toString().trim();
       const horaSalida = (fila[3] || '').toString().trim();
+
+      const horaEntradaTurno = (fila[6] || '').toString().trim();
+      const horaSalidaTurno = (fila[7] || '').toString().trim();
+      const tipoTurno = (fila[10] || '').toString().trim();
+      const horasTurno = fila[11];
 
       datosMarcajes[fecha] = {
         entrada: estadoEntrada.includes('Registrado'),
         salida: estadoSalida.includes('Registrado'),
-        turno: notas.includes('TURNO'),
+        turno: !!tipoTurno,
+        tipoTurno: tipoTurno,
+        horasTurno: horasTurno,
         horaEntrada: horaEntrada,
-        horaSalida: horaSalida
+        horaSalida: horaSalida,
+        horaEntradaTurno: horaEntradaTurno,
+        horaSalidaTurno: horaSalidaTurno
       };
       diasTrackeados.add(fecha);
     });
@@ -429,7 +487,7 @@ async function cargarMes() {
       diasTrackeados.add(fecha);
 
       if (!datosMarcajes[fecha]) {
-        datosMarcajes[fecha] = { entrada: false, salida: false, turno: false, horaEntrada: '', horaSalida: '' };
+        datosMarcajes[fecha] = { entrada: false, salida: false, turno: false, tipoTurno: '', horasTurno: '', horaEntrada: '', horaSalida: '', horaEntradaTurno: '', horaSalidaTurno: '' };
       }
       if (tipoAlerta.includes('TURNO') || accion.includes('TURNO')) {
         datosMarcajes[fecha].turno = true;
@@ -439,6 +497,16 @@ async function cargarMes() {
   } catch (e) {
     console.log('Sin hoja de Alertas para este mes:', e.message);
   }
+
+  await cargarTurnosKika();
+  turnoDatesSet.forEach(fecha => {
+    if (!datosMarcajes[fecha]) {
+      datosMarcajes[fecha] = { entrada: false, salida: false, turno: true, tipoTurno: '', horasTurno: '', horaEntrada: '', horaSalida: '', horaEntradaTurno: '', horaSalidaTurno: '' };
+    } else {
+      datosMarcajes[fecha].turno = true;
+    }
+    diasTrackeados.add(fecha);
+  });
 
   if (!huboMarcajes && !huboAlertas) {
     banner.className = 'estado-banner error';
@@ -559,9 +627,21 @@ function mostrarDetalle(fecha, info) {
     : '❌ Faltante';
 
   document.getElementById('detalleTitulo').textContent = `📅 ${fecha} - ${nombreDia}`;
-  document.getElementById('detalleEntrada').textContent = `Entrada: ${textoEntrada}`;
-  document.getElementById('detalleSalida').textContent = `Salida: ${textoSalida}`;
-  document.getElementById('detalleTurno').textContent = info.turno ? '⭐ Día de turno' : 'Día normal (sin turno)';
+  document.getElementById('detalleEntrada').textContent = `Jornada entrada: ${textoEntrada}`;
+  document.getElementById('detalleSalida').textContent = `Jornada salida: ${textoSalida}`;
+
+  let textoTurno;
+  if (info.tipoTurno) {
+    const rangoHoras = (info.horaEntradaTurno || info.horaSalidaTurno)
+      ? ` (${info.horaEntradaTurno || '—'}–${info.horaSalidaTurno || '—'})`
+      : '';
+    textoTurno = `⭐ ${info.tipoTurno}${info.horasTurno ? ' · ' + info.horasTurno + 'h' : ''}${rangoHoras}`;
+  } else if (info.turno) {
+    textoTurno = '⭐ Turno registrado en Horas Extras KIKA (sin correo de marcaje detectado ese día)';
+  } else {
+    textoTurno = 'Sin turno ese día';
+  }
+  document.getElementById('detalleTurno').textContent = textoTurno;
 
   panel.style.display = 'block';
 }
@@ -733,6 +813,52 @@ async function enviarSolicitud(event) {
   } finally {
     btn.disabled = false;
     btn.textContent = '📩 Registrar solicitud';
+  }
+
+  return false;
+}
+
+async function enviarLicencia(event) {
+  event.preventDefault();
+
+  const btn = document.getElementById('btnLicencia');
+  const banner = document.getElementById('licenciaBanner');
+
+  const fechaInicioRaw = document.getElementById('licFechaInicio').value;
+  const fechaFinRaw = document.getElementById('licFechaFin').value || fechaInicioRaw;
+
+  if (!fechaInicioRaw) {
+    alert('Selecciona una fecha de inicio.');
+    return false;
+  }
+
+  const fechaInicio = isoADDMMYYYY(fechaInicioRaw);
+  const fechaFin = isoADDMMYYYY(fechaFinRaw);
+
+  btn.disabled = true;
+  btn.textContent = '⏳ Enviando...';
+  banner.style.display = 'block';
+  banner.className = 'estado-banner cargando';
+  banner.textContent = 'Registrando licencia médica...';
+
+  try {
+    const params = new URLSearchParams({ accion: 'licencia', fechaInicio, fechaFin });
+    const data = await llamarWebAppJSONP(`${WEB_APP_URL}?${params.toString()}`);
+
+    if (data.success) {
+      banner.className = 'estado-banner ok';
+      banner.textContent = '✓ ' + data.mensaje;
+      document.getElementById('formLicencia').reset();
+    } else {
+      banner.className = 'estado-banner error';
+      banner.textContent = '⚠️ ' + (data.mensaje || 'Error al registrar la licencia');
+    }
+  } catch (e) {
+    banner.className = 'estado-banner error';
+    banner.textContent = '⚠️ ' + e.message;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '🩺 Registrar licencia';
   }
 
   return false;
