@@ -326,7 +326,7 @@ const MESES = ["Enero","Febrero","Marzo","Abril","Mayo","Junio","Julio","Agosto"
 const DIAS_SEMANA = ["Domingo","Lunes","Martes","Miércoles","Jueves","Viernes","Sábado"];
 
 let fechaVista = new Date(); // mes actualmente mostrado
-let datosMarcajes = {}; // { "DD/MM/YYYY": {entrada,salida,turno,tipoTurno,horasTurno,horaEntrada,horaSalida,horaEntradaTurno,horaSalidaTurno} }
+let datosMarcajes = {}; // { "DD/MM/YYYY": {entrada,salida,turno,tipoTurno,horasTurno,horaEntrada,horaSalida} }
 let diasTrackeados = new Set(); // fechas que sí debían tener marcaje
 let feriadosMap = new Map(); // "DD/MM/YYYY" -> descripción
 let turnoDatesSet = new Set(); // "DD/MM/YYYY" de días de turno según Horas Extras (KIKA) - respaldo si no llegó correo
@@ -471,32 +471,24 @@ async function cargarMes() {
   try {
     const tablaMarcajes = await fetchSheetTable(nombreHojaMarcajes);
     const filas = filaAValores(tablaMarcajes);
-    // Columnas: Fecha, Día Semana, HoraEntradaJornada, HoraSalidaJornada, EstadoEntradaJornada, EstadoSalidaJornada,
-    //           HoraEntradaTurno, HoraSalidaTurno, EstadoEntradaTurno, EstadoSalidaTurno, TipoTurno, HorasTurno, Notas
+    // Columnas: Fecha, Día Semana, Hora Entrada Jornada, Hora Salida Jornada, Tipo Turno, Horas Turno, Notas
     filas.forEach(fila => {
       const fecha = valorFechaCelda(fila[0]);
       if (!fecha) return;
 
-      const estadoEntrada = (fila[4] || '').toString();
-      const estadoSalida = (fila[5] || '').toString();
       const horaEntrada = (fila[2] || '').toString().trim();
       const horaSalida = (fila[3] || '').toString().trim();
-
-      const horaEntradaTurno = (fila[6] || '').toString().trim();
-      const horaSalidaTurno = (fila[7] || '').toString().trim();
-      const tipoTurno = (fila[10] || '').toString().trim();
-      const horasTurno = fila[11];
+      const tipoTurno = (fila[4] || '').toString().trim();
+      const horasTurno = fila[5];
 
       datosMarcajes[fecha] = {
-        entrada: estadoEntrada.includes('Registrado'),
-        salida: estadoSalida.includes('Registrado'),
+        entrada: !!horaEntrada,
+        salida: !!horaSalida,
         turno: !!tipoTurno,
         tipoTurno: tipoTurno,
         horasTurno: horasTurno,
         horaEntrada: horaEntrada,
-        horaSalida: horaSalida,
-        horaEntradaTurno: horaEntradaTurno,
-        horaSalidaTurno: horaSalidaTurno
+        horaSalida: horaSalida
       };
       diasTrackeados.add(fecha);
     });
@@ -518,7 +510,7 @@ async function cargarMes() {
       diasTrackeados.add(fecha);
 
       if (!datosMarcajes[fecha]) {
-        datosMarcajes[fecha] = { entrada: false, salida: false, turno: false, tipoTurno: '', horasTurno: '', horaEntrada: '', horaSalida: '', horaEntradaTurno: '', horaSalidaTurno: '' };
+        datosMarcajes[fecha] = { entrada: false, salida: false, turno: false, tipoTurno: '', horasTurno: '', horaEntrada: '', horaSalida: '' };
       }
       if (tipoAlerta.includes('TURNO') || accion.includes('TURNO')) {
         datosMarcajes[fecha].turno = true;
@@ -534,7 +526,7 @@ async function cargarMes() {
     const [dK, mK, aK] = fecha.split('/').map(Number);
     if (aK !== año || (mK - 1) !== mesIdx) return; // solo el mes que se está viendo, no todo el histórico de KIKA
     if (!datosMarcajes[fecha]) {
-      datosMarcajes[fecha] = { entrada: false, salida: false, turno: true, tipoTurno: '', horasTurno: '', horaEntrada: '', horaSalida: '', horaEntradaTurno: '', horaSalidaTurno: '' };
+      datosMarcajes[fecha] = { entrada: false, salida: false, turno: true, tipoTurno: '', horasTurno: '', horaEntrada: '', horaSalida: '' };
     } else {
       datosMarcajes[fecha].turno = true;
     }
@@ -553,21 +545,6 @@ async function cargarMes() {
   renderizarCalendario(año, mesIdx);
   renderizarStats();
   cargarSaldos(año);
-}
-
-/**
- * Un día puede tener jornada normal, turno, o ambos. Si NO hay jornada normal
- * pero SÍ hay turno marcado, mostramos el estado del turno en vez de un rojo
- * de "jornada faltante" que no aplica ese día (el turno reemplazó la jornada).
- */
-function estadoEfectivo(info) {
-  const tieneJornada = info.entrada || info.salida;
-  const tieneTurnoDatos = !!(info.horaEntradaTurno || info.horaSalidaTurno);
-
-  if (tieneJornada || !tieneTurnoDatos) {
-    return { entrada: info.entrada, salida: info.salida };
-  }
-  return { entrada: !!info.horaEntradaTurno, salida: !!info.horaSalidaTurno };
 }
 
 function renderizarCalendario(año, mesIdx) {
@@ -616,14 +593,13 @@ function renderizarCalendario(año, mesIdx) {
       div.appendChild(marca);
       div.onclick = () => mostrarDetalleLicencia(fechaStr);
     } else if (trackeado && !esFuturo) {
-      const estado = estadoEfectivo(info);
       const tickets = document.createElement('div');
       tickets.className = 'tickets';
 
       const t1 = document.createElement('div');
-      t1.className = 'ticket ' + (estado.entrada ? 'verde' : 'rojo');
+      t1.className = 'ticket ' + (info.entrada ? 'verde' : 'rojo');
       const t2 = document.createElement('div');
-      t2.className = 'ticket ' + (estado.salida ? 'verde' : 'rojo');
+      t2.className = 'ticket ' + (info.salida ? 'verde' : 'rojo');
 
       tickets.appendChild(t1);
       tickets.appendChild(t2);
@@ -684,9 +660,8 @@ function renderizarStats() {
       return;
     }
 
-    const estado = estadoEfectivo(info);
-    if (estado.entrada && estado.salida) completo++;
-    else if (estado.entrada || estado.salida) parcial++;
+    if (info.entrada && info.salida) completo++;
+    else if (info.entrada || info.salida) parcial++;
     else faltante++;
     if (info.turno) turnos++;
   });
@@ -712,15 +687,12 @@ function mostrarDetalle(fecha, info) {
     : '❌ Faltante';
 
   document.getElementById('detalleTitulo').textContent = `📅 ${fecha} - ${nombreDia}`;
-  document.getElementById('detalleEntrada').textContent = `Jornada entrada: ${textoEntrada}`;
-  document.getElementById('detalleSalida').textContent = `Jornada salida: ${textoSalida}`;
+  document.getElementById('detalleEntrada').textContent = `Entrada: ${textoEntrada}`;
+  document.getElementById('detalleSalida').textContent = `Salida: ${textoSalida}`;
 
   let textoTurno;
   if (info.tipoTurno) {
-    const rangoHoras = (info.horaEntradaTurno || info.horaSalidaTurno)
-      ? ` (${info.horaEntradaTurno || '—'}–${info.horaSalidaTurno || '—'})`
-      : '';
-    textoTurno = `⭐ ${info.tipoTurno}${info.horasTurno ? ' · ' + info.horasTurno + 'h' : ''}${rangoHoras}`;
+    textoTurno = `⭐ ${info.tipoTurno}${info.horasTurno ? ' · ' + info.horasTurno + 'h' : ''}`;
   } else if (info.turno) {
     textoTurno = '⭐ Turno registrado en Horas Extras KIKA (sin correo de marcaje detectado ese día)';
   } else {
