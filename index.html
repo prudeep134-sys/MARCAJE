@@ -796,9 +796,9 @@ function llamarWebAppJSONP(url) {
       if (!finalizado) {
         finalizado = true;
         limpiar();
-        reject(new Error('Tiempo de espera agotado (60s). El script puede seguir corriendo en segundo plano.'));
+        reject(new Error('Tiempo de espera agotado (170s). El script puede seguir corriendo en segundo plano — espera un minuto y presiona "Actualizar vista".'));
       }
-    }, 60000);
+    }, 170000);
   });
 }
 
