@@ -249,6 +249,25 @@
       <p id="detalleEntrada"></p>
       <p id="detalleSalida"></p>
       <p id="detalleTurno"></p>
+      <div id="bloqueCorregir" style="margin-top:12px; display:none;">
+        <button type="button" class="refresh-btn" style="background:#f59e0b;" onclick="mostrarFormularioCorregir()">✏️ Corregir este día</button>
+        <div id="formCorregirWrap" style="display:none; margin-top:10px;">
+          <div class="form-fila">
+            <label class="form-campo">
+              Corregir
+              <select id="corHoraTipo">
+                <option value="entrada">Hora Entrada</option>
+                <option value="salida">Hora Salida</option>
+              </select>
+            </label>
+            <label class="form-campo">
+              Hora (HH:MM)
+              <input type="time" id="corHoraValor">
+            </label>
+          </div>
+          <button type="button" class="refresh-btn" style="background:#f59e0b; margin-top:8px;" onclick="enviarCorreccionMarcaje()" id="btnCorregir">💾 Guardar corrección</button>
+        </div>
+      </div>
     </div>
   </div>
 
@@ -296,6 +315,14 @@
       </label>
       <button type="submit" class="refresh-btn" id="btnSolicitar" style="align-self:flex-start;">📩 Registrar solicitud</button>
     </form>
+
+    <div style="margin-top:20px; padding-top:16px; border-top:1px solid #e5e7eb;">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+        <strong style="color:#1f2937; font-size:.9em;">Solicitudes registradas</strong>
+        <button type="button" class="refresh-btn" style="padding:4px 10px; font-size:.75em;" onclick="cargarListaSolicitudes()">🔄</button>
+      </div>
+      <div id="listaSolicitudes" style="display:flex; flex-direction:column; gap:6px; font-size:.85em;"></div>
+    </div>
   </div>
 
   <div class="card">
@@ -545,6 +572,7 @@ async function cargarMes() {
   renderizarCalendario(año, mesIdx);
   renderizarStats();
   cargarSaldos(año);
+  cargarListaSolicitudes();
 }
 
 function renderizarCalendario(año, mesIdx) {
@@ -673,7 +701,10 @@ function renderizarStats() {
   document.getElementById('statsRow').style.display = 'grid';
 }
 
+let fechaSeleccionadaDetalle = null;
+
 function mostrarDetalle(fecha, info) {
+  fechaSeleccionadaDetalle = fecha;
   const panel = document.getElementById('detallePanel');
   const [d, m, a] = fecha.split('/');
   const fechaObj = new Date(a, m - 1, d);
@@ -700,19 +731,60 @@ function mostrarDetalle(fecha, info) {
   }
   document.getElementById('detalleTurno').textContent = textoTurno;
 
+  document.getElementById('bloqueCorregir').style.display = 'block';
+  document.getElementById('formCorregirWrap').style.display = 'none';
   panel.style.display = 'block';
 }
 
+function mostrarFormularioCorregir() {
+  document.getElementById('formCorregirWrap').style.display = 'block';
+}
+
+async function enviarCorreccionMarcaje() {
+  if (!fechaSeleccionadaDetalle) return;
+
+  const tipo = document.getElementById('corHoraTipo').value;
+  const hora = document.getElementById('corHoraValor').value; // HH:MM del <input type=time>
+  if (!hora) {
+    alert('Ingresa una hora.');
+    return;
+  }
+
+  const btn = document.getElementById('btnCorregir');
+  btn.disabled = true;
+  btn.textContent = '⏳ Guardando...';
+
+  try {
+    const params = new URLSearchParams({ accion: 'corregirMarcaje', fecha: fechaSeleccionadaDetalle, tipo, hora });
+    const data = await llamarWebAppJSONP(`${WEB_APP_URL}?${params.toString()}`);
+    if (data.success) {
+      alert('✓ ' + data.mensaje);
+      document.getElementById('formCorregirWrap').style.display = 'none';
+      await cargarMes();
+    } else {
+      alert('⚠️ ' + (data.mensaje || 'No se pudo guardar la corrección'));
+    }
+  } catch (e) {
+    alert('⚠️ ' + e.message);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '💾 Guardar corrección';
+  }
+}
+
 function mostrarDetalleLicencia(fecha) {
+  fechaSeleccionadaDetalle = null;
   const panel = document.getElementById('detallePanel');
   document.getElementById('detalleTitulo').textContent = `🩺 ${fecha}`;
   document.getElementById('detalleEntrada').textContent = 'Licencia médica registrada.';
   document.getElementById('detalleSalida').textContent = 'No aplicaba marcaje este día.';
   document.getElementById('detalleTurno').textContent = '';
+  document.getElementById('bloqueCorregir').style.display = 'none';
   panel.style.display = 'block';
 }
 
 function mostrarDetalleFuturo(fecha, info) {
+  fechaSeleccionadaDetalle = null;
   const panel = document.getElementById('detallePanel');
   document.getElementById('detalleTitulo').textContent = `📅 ${fecha}`;
   document.getElementById('detalleEntrada').textContent = 'Este día aún no ocurre.';
@@ -720,15 +792,18 @@ function mostrarDetalleFuturo(fecha, info) {
   document.getElementById('detalleTurno').textContent = info.turno
     ? '⭐ Turno planificado (según Horas Extras KIKA)'
     : '';
+  document.getElementById('bloqueCorregir').style.display = 'none';
   panel.style.display = 'block';
 }
 
 function mostrarDetalleFeriado(fecha, desc) {
+  fechaSeleccionadaDetalle = null;
   const panel = document.getElementById('detallePanel');
   document.getElementById('detalleTitulo').textContent = `🎉 ${fecha}`;
   document.getElementById('detalleEntrada').textContent = `Feriado: ${desc}`;
   document.getElementById('detalleSalida').textContent = '';
   document.getElementById('detalleTurno').textContent = 'No aplicaba marcaje.';
+  document.getElementById('bloqueCorregir').style.display = 'none';
   panel.style.display = 'block';
 }
 
@@ -892,7 +967,68 @@ async function enviarSolicitud(event) {
     btn.textContent = '📩 Registrar solicitud';
   }
 
+  await cargarListaSolicitudes();
   return false;
+}
+
+async function cargarListaSolicitudes() {
+  const cont = document.getElementById('listaSolicitudes');
+  const anio = fechaVista.getFullYear();
+  cont.innerHTML = '<span style="color:#9ca3af;">Cargando...</span>';
+
+  if (WEB_APP_URL.startsWith('PEGA_AQUI') || !WEB_APP_URL) { cont.innerHTML = ''; return; }
+
+  try {
+    const data = await llamarWebAppJSONP(`${WEB_APP_URL}?accion=listarSolicitudes&anio=${anio}`);
+    if (!data.success || !data.solicitudes || data.solicitudes.length === 0) {
+      cont.innerHTML = '<span style="color:#9ca3af;">Sin solicitudes registradas este año.</span>';
+      return;
+    }
+    cont.innerHTML = '';
+    data.solicitudes.forEach(s => {
+      const fila = document.createElement('div');
+      fila.style.cssText = 'display:flex; justify-content:space-between; align-items:center; background:#f9fafb; padding:8px 10px; border-radius:8px; border:1px solid #e5e7eb;';
+      const rango = s.fechaFin && s.fechaFin !== s.fechaInicio ? `${s.fechaInicio} al ${s.fechaFin}` : s.fechaInicio;
+      fila.innerHTML = `<span>${s.tipo === 'Administrativo' ? '🟡' : '🟢'} ${s.tipo} · ${rango} · ${s.dias} día(s)${s.fraccion && s.fraccion !== 'Día completo' ? ' (' + s.fraccion + ')' : ''}</span>`;
+      const btnDel = document.createElement('button');
+      btnDel.type = 'button';
+      btnDel.textContent = '🗑️';
+      btnDel.title = 'Eliminar esta solicitud';
+      btnDel.style.cssText = 'border:none; background:none; cursor:pointer; font-size:1em; padding:2px 6px;';
+      btnDel.onclick = () => eliminarSolicitudUI(s.marcaTemporal);
+      fila.appendChild(btnDel);
+      cont.appendChild(fila);
+    });
+  } catch (e) {
+    cont.innerHTML = '<span style="color:#991b1b;">⚠️ No se pudo cargar la lista.</span>';
+  }
+}
+
+async function eliminarSolicitudUI(marcaTemporal) {
+  if (!confirm('¿Eliminar esta solicitud? Esto devuelve el día al saldo disponible.')) return;
+
+  const banner = document.getElementById('saldosBanner');
+  banner.style.display = 'block';
+  banner.className = 'estado-banner cargando';
+  banner.textContent = 'Eliminando solicitud...';
+
+  try {
+    const params = new URLSearchParams({ accion: 'eliminarSolicitud', marcaTemporal });
+    const data = await llamarWebAppJSONP(`${WEB_APP_URL}?${params.toString()}`);
+    if (data.success) {
+      banner.className = 'estado-banner ok';
+      banner.textContent = '✓ ' + data.mensaje;
+      if (data.saldoAdmin !== undefined) document.getElementById('saldoAdminNum').textContent = data.saldoAdmin;
+      if (data.saldoVacaciones !== undefined) document.getElementById('saldoVacNum').textContent = data.saldoVacaciones;
+      await cargarListaSolicitudes();
+    } else {
+      banner.className = 'estado-banner error';
+      banner.textContent = '⚠️ ' + (data.mensaje || 'No se pudo eliminar');
+    }
+  } catch (e) {
+    banner.className = 'estado-banner error';
+    banner.textContent = '⚠️ ' + e.message;
+  }
 }
 
 async function enviarLicencia(event) {
