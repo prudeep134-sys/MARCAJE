@@ -471,7 +471,10 @@ async function cargarLicencias() {
   }
 }
 
+let cargaMesToken = 0; // evita que una carga vieja (mes anterior) escriba datos después de una carga nueva
+
 async function cargarMes() {
+  const miToken = ++cargaMesToken;
   const año = fechaVista.getFullYear();
   const mesIdx = fechaVista.getMonth();
   const nombreMes = MESES[mesIdx];
@@ -483,8 +486,10 @@ async function cargarMes() {
   document.getElementById('statsRow').style.display = 'none';
   document.getElementById('calendario').innerHTML = '';
 
-  datosMarcajes = {};
-  diasTrackeados = new Set();
+  // Se arma todo en variables LOCALES; recién al final, si esta sigue siendo
+  // la carga más reciente, se copian a las variables compartidas y se pinta.
+  const datosLocal = {};
+  const trackeadosLocal = new Set();
 
   const nombreHojaMarcajes = `Marcajes-${nombreMes}-${año}`;
   const nombreHojaAlertas = `Alertas-${nombreMes}-${año}`;
@@ -493,10 +498,14 @@ async function cargarMes() {
   let huboAlertas = false;
 
   await cargarFeriados();
+  if (miToken !== cargaMesToken) return; // una carga más nueva ya empezó, se descarta esta
+
   await cargarLicencias();
+  if (miToken !== cargaMesToken) return;
 
   try {
     const tablaMarcajes = await fetchSheetTable(nombreHojaMarcajes);
+    if (miToken !== cargaMesToken) return;
     const filas = filaAValores(tablaMarcajes);
     // Columnas: Fecha, Día Semana, Hora Entrada Jornada, Hora Salida Jornada, Tipo Turno, Horas Turno, Notas
     filas.forEach(fila => {
@@ -508,7 +517,7 @@ async function cargarMes() {
       const tipoTurno = (fila[4] || '').toString().trim();
       const horasTurno = fila[5];
 
-      datosMarcajes[fecha] = {
+      datosLocal[fecha] = {
         entrada: !!horaEntrada,
         salida: !!horaSalida,
         turno: !!tipoTurno,
@@ -517,15 +526,17 @@ async function cargarMes() {
         horaEntrada: horaEntrada,
         horaSalida: horaSalida
       };
-      diasTrackeados.add(fecha);
+      trackeadosLocal.add(fecha);
     });
     huboMarcajes = true;
   } catch (e) {
     console.log('Sin hoja de Marcajes para este mes:', e.message);
   }
+  if (miToken !== cargaMesToken) return;
 
   try {
     const tablaAlertas = await fetchSheetTable(nombreHojaAlertas);
+    if (miToken !== cargaMesToken) return;
     const filas = filaAValores(tablaAlertas);
     filas.forEach(fila => {
       const tipoAlerta = (fila[1] || '').toString();
@@ -534,31 +545,41 @@ async function cargarMes() {
       if (!diaCompleto) return;
 
       const fecha = normalizarFecha(diaCompleto.split(' (')[0].trim());
-      diasTrackeados.add(fecha);
+      trackeadosLocal.add(fecha);
 
-      if (!datosMarcajes[fecha]) {
-        datosMarcajes[fecha] = { entrada: false, salida: false, turno: false, tipoTurno: '', horasTurno: '', horaEntrada: '', horaSalida: '' };
+      if (!datosLocal[fecha]) {
+        datosLocal[fecha] = { entrada: false, salida: false, turno: false, tipoTurno: '', horasTurno: '', horaEntrada: '', horaSalida: '' };
       }
       if (tipoAlerta.includes('TURNO') || accion.includes('TURNO')) {
-        datosMarcajes[fecha].turno = true;
+        datosLocal[fecha].turno = true;
       }
     });
     huboAlertas = true;
   } catch (e) {
     console.log('Sin hoja de Alertas para este mes:', e.message);
   }
+  if (miToken !== cargaMesToken) return;
 
   await cargarTurnosKika();
+  if (miToken !== cargaMesToken) return;
+
   turnoDatesSet.forEach(fecha => {
     const [dK, mK, aK] = fecha.split('/').map(Number);
     if (aK !== año || (mK - 1) !== mesIdx) return; // solo el mes que se está viendo, no todo el histórico de KIKA
-    if (!datosMarcajes[fecha]) {
-      datosMarcajes[fecha] = { entrada: false, salida: false, turno: true, tipoTurno: '', horasTurno: '', horaEntrada: '', horaSalida: '' };
+    if (!datosLocal[fecha]) {
+      datosLocal[fecha] = { entrada: false, salida: false, turno: true, tipoTurno: '', horasTurno: '', horaEntrada: '', horaSalida: '' };
     } else {
-      datosMarcajes[fecha].turno = true;
+      datosLocal[fecha].turno = true;
     }
-    diasTrackeados.add(fecha);
+    trackeadosLocal.add(fecha);
   });
+
+  // Última verificación antes de comprometer los datos: si en el ínterin
+  // se disparó una carga más nueva, esta se descarta completa (no pinta nada).
+  if (miToken !== cargaMesToken) return;
+
+  datosMarcajes = datosLocal;
+  diasTrackeados = trackeadosLocal;
 
   if (!huboMarcajes && !huboAlertas) {
     banner.className = 'estado-banner error';
