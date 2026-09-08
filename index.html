@@ -1,3 +1,4 @@
+
 <!DOCTYPE html>
 <html lang="es">
 <head>
@@ -117,6 +118,8 @@
   .dia.no-trackeado { background:#f9fafb; color:#c1c5cc; }
   .dia.feriado { background:#fef3c7; color:#92400e; border-color:#fde68a; cursor:pointer; }
   .dia.licencia { background:#cffafe; color:#155e75; border-color:#67e8f9; cursor:pointer; }
+  .dia.administrativo { background:#fef08a; color:#854d0e; border-color:#fde047; cursor:pointer; }
+  .dia.vacaciones { background:#99f6e4; color:#065f46; border-color:#5eead4; cursor:pointer; }
   .dia.hoy { box-shadow: 0 0 0 3px #3b82f6 inset; }
 
   .dia-numero { font-weight:700; font-size:clamp(.75em,3vw,.95em); margin-bottom:4px; }
@@ -236,6 +239,14 @@
       <div class="leyenda-item">
         <span style="font-size:1.1em;">🩺</span>
         <span>Licencia médica</span>
+      </div>
+      <div class="leyenda-item">
+        <span style="font-size:1.1em;">📋</span>
+        <span>Día administrativo</span>
+      </div>
+      <div class="leyenda-item">
+        <span style="font-size:1.1em;">🏖️</span>
+        <span>Vacaciones / feriado legal</span>
       </div>
       <div class="leyenda-item">
         <div style="width:14px;height:14px;background:#f9fafb;border:2px solid #e5e7eb;border-radius:3px;flex-shrink:0;"></div>
@@ -358,6 +369,8 @@ let diasTrackeados = new Set(); // fechas que sí debían tener marcaje
 let feriadosMap = new Map(); // "DD/MM/YYYY" -> descripción
 let turnoDatesSet = new Set(); // "DD/MM/YYYY" de días de turno según Horas Extras (KIKA) - respaldo si no llegó correo
 let licenciasSet = new Set(); // "DD/MM/YYYY" cubiertas por licencia médica
+let administrativoMap = new Map(); // "DD/MM/YYYY" -> fracción (Día completo / Medio día...)
+let vacacionesSet = new Set(); // "DD/MM/YYYY" cubiertas por vacaciones/feriado legal
 
 async function fetchSheetTable(sheetName) {
   const url = `https://docs.google.com/spreadsheets/d/${SHEET_URL_ID}/gviz/tq?tqx=out:json&sheet=${encodeURIComponent(sheetName)}`;
@@ -511,6 +524,9 @@ async function cargarMes() {
   await cargarLicencias();
   if (miToken !== cargaMesToken) return;
 
+  const solicitudesDelAnio = await cargarSolicitudesRangos(año);
+  if (miToken !== cargaMesToken) return;
+
   try {
     const tablaMarcajes = await fetchSheetTable(nombreHojaMarcajes);
     if (miToken !== cargaMesToken) return;
@@ -628,7 +644,7 @@ async function cargarMes() {
   renderizarCalendario(año, mesIdx);
   renderizarStats();
   cargarSaldos(año);
-  cargarListaSolicitudes();
+  renderizarListaSolicitudes(solicitudesDelAnio);
 }
 
 function renderizarCalendario(año, mesIdx) {
@@ -668,6 +684,8 @@ function renderizarCalendario(año, mesIdx) {
     div.appendChild(numero);
 
     const esLicencia = licenciasSet.has(fechaStr);
+    const fraccionAdmin = administrativoMap.get(fechaStr);
+    const esVacaciones = vacacionesSet.has(fechaStr);
 
     if (esLicencia) {
       div.classList.add('licencia');
@@ -676,6 +694,20 @@ function renderizarCalendario(año, mesIdx) {
       marca.textContent = '🩺';
       div.appendChild(marca);
       div.onclick = () => mostrarDetalleLicencia(fechaStr);
+    } else if (fraccionAdmin !== undefined) {
+      div.classList.add('administrativo');
+      const marca = document.createElement('div');
+      marca.className = 'estrella';
+      marca.textContent = '📋';
+      div.appendChild(marca);
+      div.onclick = () => mostrarDetalleSolicitud(fechaStr, 'Administrativo', fraccionAdmin);
+    } else if (esVacaciones) {
+      div.classList.add('vacaciones');
+      const marca = document.createElement('div');
+      marca.className = 'estrella';
+      marca.textContent = '🏖️';
+      div.appendChild(marca);
+      div.onclick = () => mostrarDetalleSolicitud(fechaStr, 'Vacaciones', '');
     } else if (trackeado && !esFuturo) {
       const tickets = document.createElement('div');
       tickets.className = 'tickets';
@@ -735,6 +767,7 @@ function renderizarStats() {
     const info = datosMarcajes[fecha];
     if (!info) return;
     if (licenciasSet.has(fecha)) return; // día con licencia médica, no cuenta como completo/parcial/faltante
+    if (administrativoMap.has(fecha) || vacacionesSet.has(fecha)) return; // día administrativo o de vacaciones, tampoco
 
     const [d, m, a] = fecha.split('/').map(Number);
     const fechaDelDia = new Date(a, m - 1, d);
@@ -833,6 +866,20 @@ function mostrarDetalleLicencia(fecha) {
   const panel = document.getElementById('detallePanel');
   document.getElementById('detalleTitulo').textContent = `🩺 ${fecha}`;
   document.getElementById('detalleEntrada').textContent = 'Licencia médica registrada.';
+  document.getElementById('detalleSalida').textContent = 'No aplicaba marcaje este día.';
+  document.getElementById('detalleTurno').textContent = '';
+  document.getElementById('bloqueCorregir').style.display = 'none';
+  panel.style.display = 'block';
+}
+
+function mostrarDetalleSolicitud(fecha, tipo, fraccion) {
+  fechaSeleccionadaDetalle = null;
+  const panel = document.getElementById('detallePanel');
+  const icono = tipo === 'Administrativo' ? '📋' : '🏖️';
+  document.getElementById('detalleTitulo').textContent = `${icono} ${fecha}`;
+  document.getElementById('detalleEntrada').textContent = tipo === 'Administrativo'
+    ? `Día administrativo${fraccion && fraccion !== 'Día completo' ? ' (' + fraccion + ')' : ''}.`
+    : 'Vacaciones / feriado legal.';
   document.getElementById('detalleSalida').textContent = 'No aplicaba marcaje este día.';
   document.getElementById('detalleTurno').textContent = '';
   document.getElementById('bloqueCorregir').style.display = 'none';
@@ -1023,41 +1070,81 @@ async function enviarSolicitud(event) {
     btn.textContent = '📩 Registrar solicitud';
   }
 
-  await cargarListaSolicitudes();
+  await cargarMes(); // refresca todo: calendario (colores nuevos), estadísticas, saldos y la lista
   return false;
 }
 
-async function cargarListaSolicitudes() {
-  const cont = document.getElementById('listaSolicitudes');
-  const anio = fechaVista.getFullYear();
-  cont.innerHTML = '<span style="color:#9ca3af;">Cargando...</span>';
+/**
+ * Trae las solicitudes del año y arma los rangos día por día de
+ * Administrativo/Vacaciones (para pintar el calendario), además de
+ * devolver la lista completa (para la tarjeta de Saldos y Solicitudes).
+ * Una sola llamada al servidor sirve para ambas cosas.
+ */
+async function cargarSolicitudesRangos(anio) {
+  administrativoMap = new Map();
+  vacacionesSet = new Set();
 
-  if (WEB_APP_URL.startsWith('PEGA_AQUI') || !WEB_APP_URL) { cont.innerHTML = ''; return; }
+  if (WEB_APP_URL.startsWith('PEGA_AQUI') || !WEB_APP_URL) return [];
 
   try {
     const data = await llamarWebAppJSONP(`${WEB_APP_URL}?accion=listarSolicitudes&anio=${anio}`);
-    if (!data.success || !data.solicitudes || data.solicitudes.length === 0) {
-      cont.innerHTML = '<span style="color:#9ca3af;">Sin solicitudes registradas este año.</span>';
-      return;
-    }
-    cont.innerHTML = '';
+    if (!data.success || !data.solicitudes) return [];
+
     data.solicitudes.forEach(s => {
-      const fila = document.createElement('div');
-      fila.style.cssText = 'display:flex; justify-content:space-between; align-items:center; background:#f9fafb; padding:8px 10px; border-radius:8px; border:1px solid #e5e7eb;';
-      const rango = s.fechaFin && s.fechaFin !== s.fechaInicio ? `${s.fechaInicio} al ${s.fechaFin}` : s.fechaInicio;
-      fila.innerHTML = `<span>${s.tipo === 'Administrativo' ? '🟡' : '🟢'} ${s.tipo} · ${rango} · ${s.dias} día(s)${s.fraccion && s.fraccion !== 'Día completo' ? ' (' + s.fraccion + ')' : ''}</span>`;
-      const btnDel = document.createElement('button');
-      btnDel.type = 'button';
-      btnDel.textContent = '🗑️';
-      btnDel.title = 'Eliminar esta solicitud';
-      btnDel.style.cssText = 'border:none; background:none; cursor:pointer; font-size:1em; padding:2px 6px;';
-      btnDel.onclick = () => eliminarSolicitudUI(s.marcaTemporal);
-      fila.appendChild(btnDel);
-      cont.appendChild(fila);
+      const fin = s.fechaFin || s.fechaInicio;
+      const [d1, m1, a1] = s.fechaInicio.split('/').map(Number);
+      const [d2, m2, a2] = fin.split('/').map(Number);
+      let actual = new Date(a1, m1 - 1, d1);
+      const finDate = new Date(a2, m2 - 1, d2);
+      while (actual <= finDate) {
+        const fechaStr = `${String(actual.getDate()).padStart(2,'0')}/${String(actual.getMonth()+1).padStart(2,'0')}/${actual.getFullYear()}`;
+        if (s.tipo === 'Administrativo') {
+          administrativoMap.set(fechaStr, s.fraccion || '');
+        } else {
+          vacacionesSet.add(fechaStr);
+        }
+        actual.setDate(actual.getDate() + 1);
+      }
     });
+
+    return data.solicitudes;
   } catch (e) {
-    cont.innerHTML = '<span style="color:#991b1b;">⚠️ No se pudo cargar la lista.</span>';
+    console.log('No se pudo cargar solicitudes:', e.message);
+    return [];
   }
+}
+
+function renderizarListaSolicitudes(solicitudes) {
+  const cont = document.getElementById('listaSolicitudes');
+  if (!solicitudes || solicitudes.length === 0) {
+    cont.innerHTML = '<span style="color:#9ca3af;">Sin solicitudes registradas este año.</span>';
+    return;
+  }
+  cont.innerHTML = '';
+  solicitudes.forEach(s => {
+    const fila = document.createElement('div');
+    fila.style.cssText = 'display:flex; justify-content:space-between; align-items:center; background:#f9fafb; padding:8px 10px; border-radius:8px; border:1px solid #e5e7eb;';
+    const rango = s.fechaFin && s.fechaFin !== s.fechaInicio ? `${s.fechaInicio} al ${s.fechaFin}` : s.fechaInicio;
+    fila.innerHTML = `<span>${s.tipo === 'Administrativo' ? '📋' : '🏖️'} ${s.tipo} · ${rango} · ${s.dias} día(s)${s.fraccion && s.fraccion !== 'Día completo' ? ' (' + s.fraccion + ')' : ''}</span>`;
+    const btnDel = document.createElement('button');
+    btnDel.type = 'button';
+    btnDel.textContent = '🗑️';
+    btnDel.title = 'Eliminar esta solicitud';
+    btnDel.style.cssText = 'border:none; background:none; cursor:pointer; font-size:1em; padding:2px 6px;';
+    btnDel.onclick = () => eliminarSolicitudUI(s.marcaTemporal);
+    fila.appendChild(btnDel);
+    cont.appendChild(fila);
+  });
+}
+
+// Wrapper usado después de registrar/eliminar una solicitud (ahí sí hace
+// falta pedir los datos de nuevo, porque cambiaron).
+async function cargarListaSolicitudes() {
+  const cont = document.getElementById('listaSolicitudes');
+  cont.innerHTML = '<span style="color:#9ca3af;">Cargando...</span>';
+  const anio = fechaVista.getFullYear();
+  const solicitudes = await cargarSolicitudesRangos(anio);
+  renderizarListaSolicitudes(solicitudes);
 }
 
 async function eliminarSolicitudUI(marcaTemporal) {
@@ -1076,7 +1163,7 @@ async function eliminarSolicitudUI(marcaTemporal) {
       banner.textContent = '✓ ' + data.mensaje;
       if (data.saldoAdmin !== undefined) document.getElementById('saldoAdminNum').textContent = data.saldoAdmin;
       if (data.saldoVacaciones !== undefined) document.getElementById('saldoVacNum').textContent = data.saldoVacaciones;
-      await cargarListaSolicitudes();
+      await cargarMes(); // refresca todo: calendario (quita el color del día borrado), estadísticas, saldos y la lista
     } else {
       banner.className = 'estado-banner error';
       banner.textContent = '⚠️ ' + (data.mensaje || 'No se pudo eliminar');
@@ -1118,6 +1205,7 @@ async function enviarLicencia(event) {
       banner.className = 'estado-banner ok';
       banner.textContent = '✓ ' + data.mensaje;
       document.getElementById('formLicencia').reset();
+      await cargarMes(); // refresca el calendario para que se vea el color de la licencia recién agregada
     } else {
       banner.className = 'estado-banner error';
       banner.textContent = '⚠️ ' + (data.mensaje || 'Error al registrar la licencia');
