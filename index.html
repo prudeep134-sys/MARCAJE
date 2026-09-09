@@ -1,4 +1,3 @@
-
 <!DOCTYPE html>
 <html lang="es">
 <head>
@@ -133,7 +132,7 @@
   .ticket.rojo { background:#ef4444; }
 
   .estrella {
-    position:absolute; top:2px; right:2px; font-size:.8em;
+    position:absolute; top:1px; right:1px; font-size:.65em; line-height:1;
   }
 
   .leyenda {
@@ -169,11 +168,14 @@
     .ticket { width:11px; height:11px; }
     .nav .mes { font-size:1.15em; }
     .card { padding: 16px; }
+    .estrella { font-size:.6em; top:0; right:0; }
+    .dia-numero { padding-right: 12px; }
   }
 
   @media (max-width:360px){
     .ticket { width:9px; height:9px; }
     .dia { padding: 4px 2px; }
+    .estrella { font-size:.55em; }
   }
 </style>
 </head>
@@ -708,7 +710,7 @@ function renderizarCalendario(año, mesIdx) {
       marca.textContent = '🏖️';
       div.appendChild(marca);
       div.onclick = () => mostrarDetalleSolicitud(fechaStr, 'Vacaciones', '');
-    } else if (trackeado && !esFuturo) {
+    } else if (trackeado && !esFuturo && fechaDelDia.getDay() !== 0) {
       const tickets = document.createElement('div');
       tickets.className = 'tickets';
 
@@ -771,6 +773,12 @@ function renderizarStats() {
 
     const [d, m, a] = fecha.split('/').map(Number);
     const fechaDelDia = new Date(a, m - 1, d);
+
+    if (fechaDelDia.getDay() === 0) { // domingo: nunca corresponde marcaje, no cuenta como faltante
+      if (info.turno) turnos++;
+      return;
+    }
+
     const esFuturo = fechaDelDia > hoy && !(a === hoy.getFullYear() && (m - 1) === hoy.getMonth() && d === hoy.getDate());
     if (esFuturo) {
       if (info.turno) turnos++; // sí contamos turnos planificados, pero no completo/parcial/faltante
