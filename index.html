@@ -534,23 +534,19 @@ async function cargarMes() {
     if (miToken !== cargaMesToken) return;
     const filas = filaAValores(tablaMarcajes);
 
-    // Google a veces devuelve en silencio los datos de OTRA hoja (sin error)
-    // cuando la hoja pedida no existe. Se valida que la primera fecha real
-    // coincida con el mes/año pedido; si no, se trata como "no hay datos".
-    const primeraFechaValida = filas.map(f => valorFechaCelda(f[0])).find(f => !!f);
-    if (primeraFechaValida) {
-      const partes = primeraFechaValida.split('/');
-      const mesDevuelto = parseInt(partes[1], 10) - 1;
-      const anioDevuelto = parseInt(partes[2], 10);
-      if (mesDevuelto !== mesIdx || anioDevuelto !== año) {
-        throw new Error(`Google devolvió datos de otra hoja (mes ${mesDevuelto+1}/${anioDevuelto} en vez de ${mesIdx+1}/${año}) — la hoja pedida no existe todavía.`);
-      }
-    }
-
     // Columnas: Fecha, Día Semana, Hora Entrada Jornada, Hora Salida Jornada, Tipo Turno, Horas Turno, Notas
+    // Se filtra fila por fila (no solo la primera): Google a veces devuelve datos
+    // de OTRA hoja, o la hoja de Alertas (ajena a este código) puede mezclar
+    // fechas de varios meses — cualquier fila que no sea del mes pedido se ignora.
+    let filasFueraDeMes = 0;
     filas.forEach(fila => {
       const fecha = valorFechaCelda(fila[0]);
       if (!fecha) return;
+
+      const partesFecha = fecha.split('/');
+      const mesFila = parseInt(partesFecha[1], 10) - 1;
+      const anioFila = parseInt(partesFecha[2], 10);
+      if (mesFila !== mesIdx || anioFila !== año) { filasFueraDeMes++; return; }
 
       const horaEntrada = (fila[2] || '').toString().trim();
       const horaSalida = (fila[3] || '').toString().trim();
@@ -568,6 +564,9 @@ async function cargarMes() {
       };
       trackeadosLocal.add(fecha);
     });
+    if (filasFueraDeMes > 0) {
+      console.log(`Marcajes: se ignoraron ${filasFueraDeMes} fila(s) que no eran de ${nombreMes} ${año} (Google devolvió otra hoja o datos mezclados).`);
+    }
     huboMarcajes = true;
   } catch (e) {
     console.log('Sin hoja de Marcajes para este mes:', e.message);
@@ -579,18 +578,7 @@ async function cargarMes() {
     if (miToken !== cargaMesToken) return;
     const filas = filaAValores(tablaAlertas);
 
-    // Misma protección que en Marcajes: Google puede devolver en silencio
-    // otra hoja de Alertas si la pedida no existe todavía.
-    const primeraAlertaValida = filas.map(f => normalizarFecha((f[2] || '').toString().split(' (')[0].trim())).find(f => f && f.includes('/'));
-    if (primeraAlertaValida) {
-      const partes = primeraAlertaValida.split('/');
-      const mesDevuelto = parseInt(partes[1], 10) - 1;
-      const anioDevuelto = parseInt(partes[2], 10);
-      if (mesDevuelto !== mesIdx || anioDevuelto !== año) {
-        throw new Error(`Google devolvió Alertas de otro mes (${mesDevuelto+1}/${anioDevuelto} en vez de ${mesIdx+1}/${año}) — la hoja pedida no existe todavía.`);
-      }
-    }
-
+    let alertasFueraDeMes = 0;
     filas.forEach(fila => {
       const tipoAlerta = (fila[1] || '').toString();
       const diaCompleto = (fila[2] || '').toString();
@@ -598,6 +586,13 @@ async function cargarMes() {
       if (!diaCompleto) return;
 
       const fecha = normalizarFecha(diaCompleto.split(' (')[0].trim());
+      if (!fecha || !fecha.includes('/')) return;
+
+      const partesFecha = fecha.split('/');
+      const mesFila = parseInt(partesFecha[1], 10) - 1;
+      const anioFila = parseInt(partesFecha[2], 10);
+      if (mesFila !== mesIdx || anioFila !== año) { alertasFueraDeMes++; return; }
+
       trackeadosLocal.add(fecha);
 
       if (!datosLocal[fecha]) {
@@ -607,6 +602,9 @@ async function cargarMes() {
         datosLocal[fecha].turno = true;
       }
     });
+    if (alertasFueraDeMes > 0) {
+      console.log(`Alertas: se ignoraron ${alertasFueraDeMes} fila(s) que no eran de ${nombreMes} ${año} (mezcladas de otros meses).`);
+    }
     huboAlertas = true;
   } catch (e) {
     console.log('Sin hoja de Alertas para este mes:', e.message);
