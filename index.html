@@ -213,7 +213,7 @@
     </div>
     <div class="calendario" id="calendario"></div>
 
-    <div class="leyenda">
+    <div class="leyenda" style="display:none;">
       <div class="leyenda-item">
         <div class="leyenda-tickets"><div class="ticket verde"></div><div class="ticket verde"></div></div>
         <span>Jornada: Entrada + Salida OK</span>
@@ -329,7 +329,7 @@
       <button type="submit" class="refresh-btn" id="btnSolicitar" style="align-self:flex-start;">📩 Registrar solicitud</button>
     </form>
 
-    <div style="margin-top:20px; padding-top:16px; border-top:1px solid #e5e7eb;">
+    <div style="margin-top:20px; padding-top:16px; border-top:1px solid #e5e7eb; display:none;">
       <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
         <strong style="color:#1f2937; font-size:.9em;">Solicitudes registradas</strong>
         <button type="button" class="refresh-btn" style="padding:4px 10px; font-size:.75em;" onclick="cargarListaSolicitudes()">🔄</button>
@@ -338,7 +338,7 @@
     </div>
   </div>
 
-  <div class="card">
+  <div class="card" style="display:none;">
     <h2>🩺 Licencias Médicas</h2>
     <div id="licenciaBanner" class="estado-banner" style="display:none; margin-bottom:16px;"></div>
     <form class="form-solicitud" id="formLicencia" onsubmit="return enviarLicencia(event)">
