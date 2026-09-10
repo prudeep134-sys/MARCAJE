@@ -1104,10 +1104,16 @@ async function cargarSolicitudesRangos(anio) {
       const finDate = new Date(a2, m2 - 1, d2);
       while (actual <= finDate) {
         const fechaStr = `${String(actual.getDate()).padStart(2,'0')}/${String(actual.getMonth()+1).padStart(2,'0')}/${actual.getFullYear()}`;
-        if (s.tipo === 'Administrativo') {
-          administrativoMap.set(fechaStr, s.fraccion || '');
-        } else {
-          vacacionesSet.add(fechaStr);
+        const diaSemana = actual.getDay(); // 0=Dom, 6=Sáb
+        const esFeriado = feriadosMap.has(fechaStr);
+        // Solo se pinta el día como Administrativo/Vacaciones si es un día hábil real
+        // (ni fin de semana ni feriado) — igual que el backend cuenta los días descontados.
+        if (diaSemana !== 0 && diaSemana !== 6 && !esFeriado) {
+          if (s.tipo === 'Administrativo') {
+            administrativoMap.set(fechaStr, s.fraccion || '');
+          } else {
+            vacacionesSet.add(fechaStr);
+          }
         }
         actual.setDate(actual.getDate() + 1);
       }
