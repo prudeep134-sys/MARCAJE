@@ -253,7 +253,7 @@
       </div>
       <div class="leyenda-item">
         <div style="width:14px;height:14px;background:#f9fafb;border:2px solid #e5e7eb;border-radius:3px;flex-shrink:0;"></div>
-        <span>No aplicaba marcaje</span>
+        <span>No aplicaba marcaje / correos aún no leídos</span>
       </div>
     </div>
 
@@ -361,96 +361,50 @@
 
 <script>
 const WEB_APP_URL = 'https://script.google.com/macros/s/AKfycbyeUggJ5pBXiDgzbrdBrbJklB1TQmSg-yS4Mx70pjFc97E-tWklj-ljMDx9NRM3TgN3/exec';
-const KIKA_WEB_APP_URL = 'https://script.google.com/macros/s/AKfycby7BGMRpxMTP2wWouFvR5Acy-he_QoPdvCYz9TjoJJhy94l2_BWpKjWHvOPs0qz9nGP/exec'; // Web App de "Horas Extras KIKA" — solo lectura
-const SHEET_URL_ID = '1HzqRTa0i5dEL4GB-4O-_cRI1yeVYw4Io_tyMMAfmdoc';
+const KIKA_WEB_APP_URL = 'https://script.google.com/macros/s/AKfycby7BGMRpxMTP2wWouFvR5Acy-he_QoPdvCYz9TjoJJhy94l2_BWpKjWHvOPs0qz9nGP/exec'; // solo lectura
 const MESES = ["Enero","Febrero","Marzo","Abril","Mayo","Junio","Julio","Agosto","Septiembre","Octubre","Noviembre","Diciembre"];
 const DIAS_SEMANA = ["Domingo","Lunes","Martes","Miércoles","Jueves","Viernes","Sábado"];
 
-let fechaVista = new Date(); // mes actualmente mostrado
-let datosMarcajes = {}; // { "DD/MM/YYYY": {entrada,salida,turno,tipoTurno,horasTurno,horaEntrada,horaSalida} }
-let diasTrackeados = new Set(); // fechas que sí debían tener marcaje
-let feriadosMap = new Map(); // "DD/MM/YYYY" -> descripción
-let turnoDatesSet = new Set(); // "DD/MM/YYYY" de días de turno según Horas Extras (KIKA) - respaldo si no llegó correo
-let licenciasSet = new Set(); // "DD/MM/YYYY" cubiertas por licencia médica
-let administrativoMap = new Map(); // "DD/MM/YYYY" -> fracción (Día completo / Medio día...)
-let vacacionesSet = new Set(); // "DD/MM/YYYY" cubiertas por vacaciones/feriado legal
+let fechaVista = new Date();
+let datosMarcajes = {};
+let diasTrackeados = new Set();
+let feriadosMap = new Map();
+let turnoDatesSet = new Set();
+let licenciasSet = new Set();
+let administrativoMap = new Map();
+let vacacionesSet = new Set();
+let ultimaSincronizacion = 0; // hasta cuándo se leyeron los correos de Gmail
 
-async function fetchSheetTable(sheetName) {
-  const url = `https://docs.google.com/spreadsheets/d/${SHEET_URL_ID}/gviz/tq?tqx=out:json&sheet=${encodeURIComponent(sheetName)}`;
-  const res = await fetch(url);
-  if (!res.ok) throw new Error('No se pudo conectar a la planilla');
-  const text = await res.text();
-  const jsonStr = text.substring(text.indexOf('(') + 1, text.lastIndexOf(')'));
-  const data = JSON.parse(jsonStr);
-  if (data.status === 'error') {
-    const msg = (data.errors && data.errors[0] && data.errors[0].detailed_message) || 'Hoja no encontrada';
-    throw new Error(msg);
-  }
-  return data.table;
+console.log('%c[Monitor de Marcaje] versión cargada: 2026-11-09-sync-fix', 'color:#10b981; font-weight:bold;');
+
+function pad2(n) { return String(n).padStart(2, '0'); }
+function fechaClave(dt) { return `${pad2(dt.getDate())}/${pad2(dt.getMonth() + 1)}/${dt.getFullYear()}`; }
+function parseFecha(s) { const [d, m, a] = s.split('/').map(Number); return new Date(a, m - 1, d); }
+function recorrerRango(ini, fin, fn) {
+  const actual = parseFecha(ini);
+  const finDate = parseFecha(fin || ini);
+  while (actual <= finDate) { fn(new Date(actual)); actual.setDate(actual.getDate() + 1); }
 }
-
-function filaAValores(tabla) {
-  if (!tabla || !tabla.rows) return [];
-  return tabla.rows.map(r => (r.c || []).map(c => (c ? c.v : null)));
-}
-
 function normalizarFecha(fechaStr) {
   if (!fechaStr) return fechaStr;
   const partes = fechaStr.toString().trim().split('/');
   if (partes.length !== 3) return fechaStr;
-  const dia = partes[0].padStart(2, '0');
-  const mes = partes[1].padStart(2, '0');
-  const año = partes[2];
-  return `${dia}/${mes}/${año}`;
+  return `${partes[0].padStart(2, '0')}/${partes[1].padStart(2, '0')}/${partes[2]}`;
+}
+// Un día está "cubierto" si los correos ya se leyeron después de que ese día terminó.
+function diaCubierto(dt) {
+  if (!ultimaSincronizacion) return false;
+  const finDelDia = new Date(dt.getFullYear(), dt.getMonth(), dt.getDate() + 1).getTime();
+  return finDelDia <= ultimaSincronizacion;
+}
+function formatearMomento(ts) {
+  return new Date(ts).toLocaleString('es-CL', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
 }
 
-function valorFechaCelda(v) {
-  if (v === null || v === undefined || v === '') return '';
-  const str = v.toString().trim();
-  if (str.startsWith('Date(')) {
-    const numeros = str.match(/-?\d+/g);
-    if (numeros && numeros.length >= 3) {
-      const año = parseInt(numeros[0]);
-      const mesIndex = parseInt(numeros[1]);
-      const dia = parseInt(numeros[2]);
-      const diaPad = String(dia).padStart(2, '0');
-      const mesPad = String(mesIndex + 1).padStart(2, '0');
-      return `${diaPad}/${mesPad}/${año}`;
-    }
-  }
-  return normalizarFecha(str);
-}
-
-async function cargarFeriados() {
-  feriadosMap = new Map();
-  try {
-    const tabla = await fetchSheetTable('Feriados');
-    if (!tabla.cols || !tabla.cols[1] || tabla.cols[1].label !== 'Descripción') {
-      throw new Error('La hoja "Feriados" todavía no existe (Google devolvió otra hoja distinta).');
-    }
-    const filas = filaAValores(tabla);
-    filas.forEach(fila => {
-      const fecha = valorFechaCelda(fila[0]);
-      const desc = (fila[1] || '').toString();
-      if (fecha) feriadosMap.set(fecha, desc);
-    });
-  } catch (e) {
-    console.log('Sin hoja de Feriados todavía (presiona "Buscar en Gmail ahora" una vez para generarla):', e.message);
-  }
-}
-
-/**
- * Trae TODOS los turnos guardados en "Horas Extras KIKA" (solo lectura, un solo
- * fetch trae todo el historial). Se usa como respaldo del calendario: si un día
- * tiene turno en KIKA pero por algún motivo no llegó/no se detectó el correo de
- * marcaje correspondiente, igual se marca para que se note que falta el correo.
- * El detalle "Tipo Turno" real (Extra Lun-Jue, Sábado SAR, etc.) siempre viene
- * primero desde la hoja de Marcajes, que es donde Code.gs lo clasifica.
- */
+/** Turnos de "Horas Extras KIKA" (solo lectura). Devuelve un Set "DD/MM/YYYY". */
 async function cargarTurnosKika() {
-  turnoDatesSet = new Set();
-  if (!KIKA_WEB_APP_URL || KIKA_WEB_APP_URL.startsWith('PEGA_AQUI')) return;
-
+  const set = new Set();
+  if (!KIKA_WEB_APP_URL || KIKA_WEB_APP_URL.startsWith('PEGA_AQUI')) return set;
   try {
     const data = await llamarWebAppJSONP(KIKA_WEB_APP_URL);
     Object.keys(data).forEach(mesKey => {
@@ -458,44 +412,16 @@ async function cargarTurnosKika() {
       (data[mesKey] || []).forEach(registro => {
         if (!registro || !registro.fecha) return;
         const [y, m, d] = registro.fecha.split('-');
-        if (y && m && d) turnoDatesSet.add(`${d}/${m}/${y}`);
+        if (y && m && d) set.add(`${d}/${m}/${y}`);
       });
     });
   } catch (e) {
     console.log('No se pudo cargar Horas Extras (KIKA):', e.message);
   }
+  return set;
 }
 
-async function cargarLicencias() {
-  licenciasSet = new Set();
-  try {
-    const tabla = await fetchSheetTable('Licencias');
-    if (!tabla.cols || !tabla.cols[1] || tabla.cols[1].label !== 'Fecha Inicio') {
-      throw new Error('La hoja "Licencias" todavía no existe (Google devolvió otra hoja distinta).');
-    }
-    const filas = filaAValores(tabla);
-    filas.forEach(fila => {
-      const fechaInicio = valorFechaCelda(fila[1]);
-      if (!fechaInicio) return;
-      const fechaFin = valorFechaCelda(fila[2]) || fechaInicio;
-      const [d1, m1, a1] = fechaInicio.split('/').map(Number);
-      const [d2, m2, a2] = fechaFin.split('/').map(Number);
-      let actual = new Date(a1, m1 - 1, d1);
-      const finDate = new Date(a2, m2 - 1, d2);
-      while (actual <= finDate) {
-        const fechaStr = `${String(actual.getDate()).padStart(2,'0')}/${String(actual.getMonth()+1).padStart(2,'0')}/${actual.getFullYear()}`;
-        licenciasSet.add(fechaStr);
-        actual.setDate(actual.getDate() + 1);
-      }
-    });
-  } catch (e) {
-    console.log('Sin hoja de Licencias todavía:', e.message);
-  }
-}
-
-console.log('%c[Monitor de Marcaje] versión cargada: 2026-08-25-token-fix', 'color:#10b981; font-weight:bold;');
-
-let cargaMesToken = 0; // evita que una carga vieja (mes anterior) escriba datos después de una carga nueva
+let cargaMesToken = 0;
 
 async function cargarMes() {
   const miToken = ++cargaMesToken;
@@ -504,174 +430,135 @@ async function cargarMes() {
   const nombreMes = MESES[mesIdx];
 
   document.getElementById('mesLabel').textContent = `${nombreMes} ${año}`;
+  document.getElementById('saldosAnio').textContent = `(${año})`;
   const banner = document.getElementById('estadoBanner');
   banner.className = 'estado-banner cargando';
-  banner.textContent = 'Cargando datos desde Google Sheets...';
+  banner.textContent = 'Cargando datos...';
   document.getElementById('statsRow').style.display = 'none';
   document.getElementById('calendario').innerHTML = '';
 
-  // Se arma todo en variables LOCALES; recién al final, si esta sigue siendo
-  // la carga más reciente, se copian a las variables compartidas y se pinta.
+  let datos, turnosKika;
+  try {
+    [datos, turnosKika] = await Promise.all([
+      llamarWebAppJSONP(`${WEB_APP_URL}?accion=datosMes&anio=${año}&mes=${mesIdx + 1}`),
+      cargarTurnosKika()
+    ]);
+  } catch (e) {
+    if (miToken !== cargaMesToken) return;
+    banner.className = 'estado-banner error';
+    banner.textContent = '⚠️ No se pudieron cargar los datos: ' + e.message;
+    return;
+  }
+  if (miToken !== cargaMesToken) return;
+  if (!datos || !datos.success) {
+    banner.className = 'estado-banner error';
+    banner.textContent = '⚠️ ' + ((datos && datos.mensaje) || 'Error al leer la planilla');
+    return;
+  }
+
+  ultimaSincronizacion = datos.ultimaSincronizacion || 0;
+
+  const feriadosLocal = new Map();
+  (datos.feriados || []).forEach(f => feriadosLocal.set(f.fecha, f.desc));
+
+  const licLocal = new Set();
+  (datos.licencias || []).forEach(l => recorrerRango(l.fechaInicio, l.fechaFin, dt => licLocal.add(fechaClave(dt))));
+
+  // Administrativo/Vacaciones: solo días hábiles reales, igual que el backend.
+  const adminLocal = new Map();
+  const vacLocal = new Set();
+  (datos.solicitudes || []).forEach(s => recorrerRango(s.fechaInicio, s.fechaFin || s.fechaInicio, dt => {
+    const dow = dt.getDay();
+    const k = fechaClave(dt);
+    if (dow === 0 || dow === 6 || feriadosLocal.has(k)) return;
+    if (s.tipo === 'Administrativo') adminLocal.set(k, s.fraccion || '');
+    else vacLocal.add(k);
+  }));
+
+  const enEsteMes = f => { const p = f.split('/').map(Number); return p[1] - 1 === mesIdx && p[2] === año; };
+  const vacio = () => ({ entrada: false, salida: false, turno: false, tipoTurno: '', horasTurno: '', horaEntrada: '', horaSalida: '' });
+
   const datosLocal = {};
   const trackeadosLocal = new Set();
 
-  const nombreHojaMarcajes = `Marcajes-${nombreMes}-${año}`;
-  const nombreHojaAlertas = `Alertas-${nombreMes}-${año}`;
+  (datos.marcajes || []).forEach(r => {
+    const fecha = normalizarFecha(r.fecha);
+    if (!fecha || !enEsteMes(fecha)) return;
+    datosLocal[fecha] = {
+      entrada: !!r.entrada,
+      salida: !!r.salida,
+      turno: !!r.tipoTurno,
+      tipoTurno: r.tipoTurno,
+      horasTurno: r.horasTurno,
+      horaEntrada: r.entrada,
+      horaSalida: r.salida
+    };
+    trackeadosLocal.add(fecha);
+  });
+  const huboMarcajes = trackeadosLocal.size > 0;
 
-  let huboMarcajes = false;
-  let huboAlertas = false;
+  (datos.alertas || []).forEach(al => {
+    const fecha = normalizarFecha((al.dia || '').split(' (')[0].trim());
+    if (!fecha || !fecha.includes('/') || !enEsteMes(fecha)) return;
+    trackeadosLocal.add(fecha);
+    if (!datosLocal[fecha]) datosLocal[fecha] = vacio();
+    if ((al.tipo || '').includes('TURNO') || (al.accion || '').includes('TURNO')) datosLocal[fecha].turno = true;
+  });
 
-  await cargarFeriados();
-  if (miToken !== cargaMesToken) return; // una carga más nueva ya empezó, se descarta esta
-
-  await cargarLicencias();
-  if (miToken !== cargaMesToken) return;
-
-  const solicitudesDelAnio = await cargarSolicitudesRangos(año);
-  if (miToken !== cargaMesToken) return;
-
-  try {
-    const tablaMarcajes = await fetchSheetTable(nombreHojaMarcajes);
-    if (miToken !== cargaMesToken) return;
-    const filas = filaAValores(tablaMarcajes);
-
-    // Columnas: Fecha, Día Semana, Hora Entrada Jornada, Hora Salida Jornada, Tipo Turno, Horas Turno, Notas
-    // Se filtra fila por fila (no solo la primera): Google a veces devuelve datos
-    // de OTRA hoja, o la hoja de Alertas (ajena a este código) puede mezclar
-    // fechas de varios meses — cualquier fila que no sea del mes pedido se ignora.
-    let filasFueraDeMes = 0;
-    let filasValidasMes = 0;
-    filas.forEach(fila => {
-      const fecha = valorFechaCelda(fila[0]);
-      if (!fecha) return;
-
-      const partesFecha = fecha.split('/');
-      const mesFila = parseInt(partesFecha[1], 10) - 1;
-      const anioFila = parseInt(partesFecha[2], 10);
-      if (mesFila !== mesIdx || anioFila !== año) { filasFueraDeMes++; return; }
-      filasValidasMes++;
-
-      const horaEntrada = (fila[2] || '').toString().trim();
-      const horaSalida = (fila[3] || '').toString().trim();
-      const tipoTurno = (fila[4] || '').toString().trim();
-      const horasTurno = fila[5];
-
-      datosLocal[fecha] = {
-        entrada: !!horaEntrada,
-        salida: !!horaSalida,
-        turno: !!tipoTurno,
-        tipoTurno: tipoTurno,
-        horasTurno: horasTurno,
-        horaEntrada: horaEntrada,
-        horaSalida: horaSalida
-      };
-      trackeadosLocal.add(fecha);
-    });
-    if (filasFueraDeMes > 0) {
-      console.log(`Marcajes: se ignoraron ${filasFueraDeMes} fila(s) que no eran de ${nombreMes} ${año} (Google devolvió otra hoja o datos mezclados).`);
-    }
-    // Solo cuenta como "este mes tiene datos" si hay al menos una fila real del mes
-    // (si Google devolvió otra hoja, todas las filas se ignoran y no hay datos).
-    huboMarcajes = filasValidasMes > 0;
-  } catch (e) {
-    console.log('Sin hoja de Marcajes para este mes:', e.message);
-  }
-  if (miToken !== cargaMesToken) return;
-
-  try {
-    const tablaAlertas = await fetchSheetTable(nombreHojaAlertas);
-    if (miToken !== cargaMesToken) return;
-    const filas = filaAValores(tablaAlertas);
-
-    let alertasFueraDeMes = 0;
-    filas.forEach(fila => {
-      const tipoAlerta = (fila[1] || '').toString();
-      const diaCompleto = (fila[2] || '').toString();
-      const accion = (fila[4] || '').toString();
-      if (!diaCompleto) return;
-
-      const fecha = normalizarFecha(diaCompleto.split(' (')[0].trim());
-      if (!fecha || !fecha.includes('/')) return;
-
-      const partesFecha = fecha.split('/');
-      const mesFila = parseInt(partesFecha[1], 10) - 1;
-      const anioFila = parseInt(partesFecha[2], 10);
-      if (mesFila !== mesIdx || anioFila !== año) { alertasFueraDeMes++; return; }
-
-      trackeadosLocal.add(fecha);
-
-      if (!datosLocal[fecha]) {
-        datosLocal[fecha] = { entrada: false, salida: false, turno: false, tipoTurno: '', horasTurno: '', horaEntrada: '', horaSalida: '' };
-      }
-      if (tipoAlerta.includes('TURNO') || accion.includes('TURNO')) {
-        datosLocal[fecha].turno = true;
-      }
-    });
-    if (alertasFueraDeMes > 0) {
-      console.log(`Alertas: se ignoraron ${alertasFueraDeMes} fila(s) que no eran de ${nombreMes} ${año} (mezcladas de otros meses).`);
-    }
-    huboAlertas = true;
-  } catch (e) {
-    console.log('Sin hoja de Alertas para este mes:', e.message);
-  }
-  if (miToken !== cargaMesToken) return;
-
-  await cargarTurnosKika();
-  if (miToken !== cargaMesToken) return;
-
-  turnoDatesSet.forEach(fecha => {
-    const [dK, mK, aK] = fecha.split('/').map(Number);
-    if (aK !== año || (mK - 1) !== mesIdx) return; // solo el mes que se está viendo, no todo el histórico de KIKA
+  turnosKika.forEach(fecha => {
+    if (!enEsteMes(fecha)) return;
     if (!datosLocal[fecha]) {
-      datosLocal[fecha] = { entrada: false, salida: false, turno: true, tipoTurno: '', horasTurno: '', horaEntrada: '', horaSalida: '' };
-    } else {
-      datosLocal[fecha].turno = true;
+      datosLocal[fecha] = vacio();
+      // Si los correos de ese día aún no se leen, no se pinta como faltante.
+      datosLocal[fecha].pendiente = !diaCubierto(parseFecha(fecha));
     }
+    datosLocal[fecha].turno = true;
     trackeadosLocal.add(fecha);
   });
 
-  // En un mes que SÍ tiene datos, un día hábil (lun-vie) ya pasado que no tiene
-  // ningún registro es un marcaje faltante: se muestra en rojo y se puede tocar
-  // para agregar la hora a mano. No aplica a feriados, licencias, días
-  // administrativos, vacaciones, fines de semana, hoy ni días futuros.
+  // Día hábil sin ningún registro = marcaje faltante, pero SOLO si los
+  // correos de ese día ya se leyeron.
   if (huboMarcajes) {
-    const hoyInicio = new Date();
-    hoyInicio.setHours(0, 0, 0, 0);
     const diasEnElMes = new Date(año, mesIdx + 1, 0).getDate();
     for (let d = 1; d <= diasEnElMes; d++) {
       const f = new Date(año, mesIdx, d);
       const dow = f.getDay();
       if (dow === 0 || dow === 6) continue;
-      if (f >= hoyInicio) continue;
-      const fechaStr = `${String(d).padStart(2,'0')}/${String(mesIdx+1).padStart(2,'0')}/${año}`;
-      if (trackeadosLocal.has(fechaStr)) continue;
-      if (feriadosMap.has(fechaStr) || licenciasSet.has(fechaStr) ||
-          administrativoMap.has(fechaStr) || vacacionesSet.has(fechaStr)) continue;
-      datosLocal[fechaStr] = { entrada: false, salida: false, turno: false, tipoTurno: '', horasTurno: '', horaEntrada: '', horaSalida: '' };
-      trackeadosLocal.add(fechaStr);
+      if (!diaCubierto(f)) continue;
+      const k = fechaClave(f);
+      if (trackeadosLocal.has(k)) continue;
+      if (feriadosLocal.has(k) || licLocal.has(k) || adminLocal.has(k) || vacLocal.has(k)) continue;
+      datosLocal[k] = vacio();
+      trackeadosLocal.add(k);
     }
   }
 
-  // Última verificación antes de comprometer los datos: si en el ínterin
-  // se disparó una carga más nueva, esta se descarta completa (no pinta nada).
   if (miToken !== cargaMesToken) return;
 
+  feriadosMap = feriadosLocal;
+  licenciasSet = licLocal;
+  administrativoMap = adminLocal;
+  vacacionesSet = vacLocal;
+  turnoDatesSet = turnosKika;
   datosMarcajes = datosLocal;
   diasTrackeados = trackeadosLocal;
 
-  if (!huboMarcajes && !huboAlertas) {
+  if (!huboMarcajes) {
     banner.className = 'estado-banner error';
-    banner.textContent = `⚠️ No hay datos para ${nombreMes} ${año}. Aún no se ha ejecutado el script en ese mes.`;
+    banner.textContent = `⚠️ No hay marcajes para ${nombreMes} ${año}.`;
   } else {
     banner.className = 'estado-banner ok';
-    const ahora = new Date();
-    banner.textContent = `✓ Datos actualizados · ${ahora.toLocaleTimeString('es-CL', {hour:'2-digit', minute:'2-digit'})}`;
+    banner.textContent = ultimaSincronizacion
+      ? `✓ Correos de Gmail leídos hasta el ${formatearMomento(ultimaSincronizacion)}`
+      : '✓ Datos cargados (aún sin búsqueda en Gmail registrada)';
   }
+
+  document.getElementById('saldoAdminNum').textContent = datos.saldoAdmin;
+  document.getElementById('saldoVacNum').textContent = datos.saldoVacaciones;
 
   renderizarCalendario(año, mesIdx);
   renderizarStats();
-  cargarSaldos(año);
-  renderizarListaSolicitudes(solicitudesDelAnio);
+  renderizarListaSolicitudes(datos.solicitudes || []);
 }
 
 function renderizarCalendario(año, mesIdx) {
@@ -692,18 +579,16 @@ function renderizarCalendario(año, mesIdx) {
   }
 
   for (let dia = 1; dia <= diasEnMes; dia++) {
-    const fechaStr = `${String(dia).padStart(2,'0')}/${String(mesIdx+1).padStart(2,'0')}/${año}`;
+    const fechaStr = `${pad2(dia)}/${pad2(mesIdx + 1)}/${año}`;
     const div = document.createElement('div');
     div.className = 'dia';
-
-    if (esMesActual && dia === hoy.getDate()) {
-      div.classList.add('hoy');
-    }
+    if (esMesActual && dia === hoy.getDate()) div.classList.add('hoy');
 
     const info = datosMarcajes[fechaStr];
     const trackeado = diasTrackeados.has(fechaStr);
     const fechaDelDia = new Date(año, mesIdx, dia);
     const esFuturo = fechaDelDia > hoy && !(esMesActual && dia === hoy.getDate());
+    const pendiente = !!(info && info.pendiente);
 
     const numero = document.createElement('div');
     numero.className = 'dia-numero';
@@ -716,66 +601,38 @@ function renderizarCalendario(año, mesIdx) {
 
     if (esLicencia) {
       div.classList.add('licencia');
-      const marca = document.createElement('div');
-      marca.className = 'estrella';
-      marca.textContent = '🩺';
-      div.appendChild(marca);
+      agregarMarca(div, '🩺');
       div.onclick = () => mostrarDetalleLicencia(fechaStr);
     } else if (fraccionAdmin !== undefined) {
       div.classList.add('administrativo');
-      const marca = document.createElement('div');
-      marca.className = 'estrella';
-      marca.textContent = '📋';
-      div.appendChild(marca);
+      agregarMarca(div, '📋');
       div.onclick = () => mostrarDetalleSolicitud(fechaStr, 'Administrativo', fraccionAdmin);
     } else if (esVacaciones) {
       div.classList.add('vacaciones');
-      const marca = document.createElement('div');
-      marca.className = 'estrella';
-      marca.textContent = '🏖️';
-      div.appendChild(marca);
+      agregarMarca(div, '🏖️');
       div.onclick = () => mostrarDetalleSolicitud(fechaStr, 'Vacaciones', '');
-    } else if (trackeado && !esFuturo && fechaDelDia.getDay() !== 0) {
+    } else if (trackeado && !esFuturo && !pendiente && fechaDelDia.getDay() !== 0) {
       const tickets = document.createElement('div');
       tickets.className = 'tickets';
-
       const t1 = document.createElement('div');
       t1.className = 'ticket ' + (info.entrada ? 'verde' : 'rojo');
       const t2 = document.createElement('div');
       t2.className = 'ticket ' + (info.salida ? 'verde' : 'rojo');
-
       tickets.appendChild(t1);
       tickets.appendChild(t2);
       div.appendChild(tickets);
-
-      if (info.turno) {
-        const estrella = document.createElement('div');
-        estrella.className = 'estrella';
-        estrella.textContent = '⭐';
-        div.appendChild(estrella);
-      }
-
+      if (info.turno) agregarMarca(div, '⭐');
       div.onclick = () => mostrarDetalle(fechaStr, info);
-    } else if (trackeado && esFuturo) {
-      // Turno planificado a futuro (viene de KIKA): se muestra la estrella
-      // como referencia, pero sin tickets rojos porque el día aún no ocurre.
-      if (info.turno) {
-        const estrella = document.createElement('div');
-        estrella.className = 'estrella';
-        estrella.textContent = '⭐';
-        div.appendChild(estrella);
-      }
+    } else if (trackeado && (esFuturo || pendiente)) {
+      if (info.turno) agregarMarca(div, '⭐');
       div.classList.add('no-trackeado');
-      div.onclick = () => mostrarDetalleFuturo(fechaStr, info);
+      div.onclick = () => mostrarDetalleFuturo(fechaStr, info, esFuturo);
     } else {
       div.classList.add('no-trackeado');
       const descFeriado = feriadosMap.get(fechaStr);
       if (descFeriado) {
         div.classList.add('feriado');
-        const marca = document.createElement('div');
-        marca.className = 'estrella';
-        marca.textContent = '🎉';
-        div.appendChild(marca);
+        agregarMarca(div, '🎉');
         div.onclick = () => mostrarDetalleFeriado(fechaStr, descFeriado);
       }
     }
@@ -784,31 +641,29 @@ function renderizarCalendario(año, mesIdx) {
   }
 }
 
+function agregarMarca(div, emoji) {
+  const marca = document.createElement('div');
+  marca.className = 'estrella';
+  marca.textContent = emoji;
+  div.appendChild(marca);
+}
+
 function renderizarStats() {
   let completo = 0, parcial = 0, faltante = 0, turnos = 0;
   const hoy = new Date();
-  const año = fechaVista.getFullYear();
-  const mesIdx = fechaVista.getMonth();
 
   diasTrackeados.forEach(fecha => {
     const info = datosMarcajes[fecha];
     if (!info) return;
-    if (licenciasSet.has(fecha)) return; // día con licencia médica, no cuenta como completo/parcial/faltante
-    if (administrativoMap.has(fecha) || vacacionesSet.has(fecha)) return; // día administrativo o de vacaciones, tampoco
+    if (licenciasSet.has(fecha)) return;
+    if (administrativoMap.has(fecha) || vacacionesSet.has(fecha)) return;
 
-    const [d, m, a] = fecha.split('/').map(Number);
-    const fechaDelDia = new Date(a, m - 1, d);
+    const fechaDelDia = parseFecha(fecha);
+    if (fechaDelDia.getDay() === 0) { if (info.turno) turnos++; return; }
 
-    if (fechaDelDia.getDay() === 0) { // domingo: nunca corresponde marcaje, no cuenta como faltante
-      if (info.turno) turnos++;
-      return;
-    }
-
-    const esFuturo = fechaDelDia > hoy && !(a === hoy.getFullYear() && (m - 1) === hoy.getMonth() && d === hoy.getDate());
-    if (esFuturo) {
-      if (info.turno) turnos++; // sí contamos turnos planificados, pero no completo/parcial/faltante
-      return;
-    }
+    const esHoy = fechaDelDia.toDateString() === hoy.toDateString();
+    const esFuturo = fechaDelDia > hoy && !esHoy;
+    if (esFuturo || info.pendiente) { if (info.turno) turnos++; return; }
 
     if (info.entrada && info.salida) completo++;
     else if (info.entrada || info.salida) parcial++;
@@ -828,29 +683,19 @@ let fechaSeleccionadaDetalle = null;
 function mostrarDetalle(fecha, info) {
   fechaSeleccionadaDetalle = fecha;
   const panel = document.getElementById('detallePanel');
-  const [d, m, a] = fecha.split('/');
-  const fechaObj = new Date(a, m - 1, d);
-  const nombreDia = DIAS_SEMANA[fechaObj.getDay()];
+  const nombreDia = DIAS_SEMANA[parseFecha(fecha).getDay()];
 
-  const textoEntrada = info.entrada
-    ? `✓ Registrada${info.horaEntrada ? ' a las ' + info.horaEntrada : ''}`
-    : '❌ Faltante';
-  const textoSalida = info.salida
-    ? `✓ Registrada${info.horaSalida ? ' a las ' + info.horaSalida : ''}`
-    : '❌ Faltante';
+  const textoEntrada = info.entrada ? `✓ Registrada${info.horaEntrada ? ' a las ' + info.horaEntrada : ''}` : '❌ Faltante';
+  const textoSalida = info.salida ? `✓ Registrada${info.horaSalida ? ' a las ' + info.horaSalida : ''}` : '❌ Faltante';
 
   document.getElementById('detalleTitulo').textContent = `📅 ${fecha} - ${nombreDia}`;
   document.getElementById('detalleEntrada').textContent = `Entrada: ${textoEntrada}`;
   document.getElementById('detalleSalida').textContent = `Salida: ${textoSalida}`;
 
   let textoTurno;
-  if (info.tipoTurno) {
-    textoTurno = `⭐ ${info.tipoTurno}${info.horasTurno ? ' · ' + info.horasTurno + 'h' : ''}`;
-  } else if (info.turno) {
-    textoTurno = '⭐ Turno registrado en Horas Extras KIKA (sin correo de marcaje detectado ese día)';
-  } else {
-    textoTurno = 'Sin turno ese día';
-  }
+  if (info.tipoTurno) textoTurno = `⭐ ${info.tipoTurno}${info.horasTurno ? ' · ' + info.horasTurno + 'h' : ''}`;
+  else if (info.turno) textoTurno = '⭐ Turno registrado en Horas Extras KIKA (sin correo de marcaje detectado ese día)';
+  else textoTurno = 'Sin turno ese día';
   document.getElementById('detalleTurno').textContent = textoTurno;
 
   document.getElementById('bloqueCorregir').style.display = 'block';
@@ -864,18 +709,13 @@ function mostrarFormularioCorregir() {
 
 async function enviarCorreccionMarcaje() {
   if (!fechaSeleccionadaDetalle) return;
-
   const tipo = document.getElementById('corHoraTipo').value;
-  const hora = document.getElementById('corHoraValor').value; // HH:MM del <input type=time>
-  if (!hora) {
-    alert('Ingresa una hora.');
-    return;
-  }
+  const hora = document.getElementById('corHoraValor').value;
+  if (!hora) { alert('Ingresa una hora.'); return; }
 
   const btn = document.getElementById('btnCorregir');
   btn.disabled = true;
   btn.textContent = '⏳ Guardando...';
-
   try {
     const params = new URLSearchParams({ accion: 'corregirMarcaje', fecha: fechaSeleccionadaDetalle, tipo, hora });
     const data = await llamarWebAppJSONP(`${WEB_APP_URL}?${params.toString()}`);
@@ -896,18 +736,16 @@ async function enviarCorreccionMarcaje() {
 
 function mostrarDetalleLicencia(fecha) {
   fechaSeleccionadaDetalle = null;
-  const panel = document.getElementById('detallePanel');
   document.getElementById('detalleTitulo').textContent = `🩺 ${fecha}`;
   document.getElementById('detalleEntrada').textContent = 'Licencia médica registrada.';
   document.getElementById('detalleSalida').textContent = 'No aplicaba marcaje este día.';
   document.getElementById('detalleTurno').textContent = '';
   document.getElementById('bloqueCorregir').style.display = 'none';
-  panel.style.display = 'block';
+  document.getElementById('detallePanel').style.display = 'block';
 }
 
 function mostrarDetalleSolicitud(fecha, tipo, fraccion) {
   fechaSeleccionadaDetalle = null;
-  const panel = document.getElementById('detallePanel');
   const icono = tipo === 'Administrativo' ? '📋' : '🏖️';
   document.getElementById('detalleTitulo').textContent = `${icono} ${fecha}`;
   document.getElementById('detalleEntrada').textContent = tipo === 'Administrativo'
@@ -916,31 +754,29 @@ function mostrarDetalleSolicitud(fecha, tipo, fraccion) {
   document.getElementById('detalleSalida').textContent = 'No aplicaba marcaje este día.';
   document.getElementById('detalleTurno').textContent = '';
   document.getElementById('bloqueCorregir').style.display = 'none';
-  panel.style.display = 'block';
+  document.getElementById('detallePanel').style.display = 'block';
 }
 
-function mostrarDetalleFuturo(fecha, info) {
+function mostrarDetalleFuturo(fecha, info, esFuturo) {
   fechaSeleccionadaDetalle = null;
-  const panel = document.getElementById('detallePanel');
   document.getElementById('detalleTitulo').textContent = `📅 ${fecha}`;
-  document.getElementById('detalleEntrada').textContent = 'Este día aún no ocurre.';
+  document.getElementById('detalleEntrada').textContent = esFuturo
+    ? 'Este día aún no ocurre.'
+    : 'Los correos de este día todavía no se han leído de Gmail.';
   document.getElementById('detalleSalida').textContent = '';
-  document.getElementById('detalleTurno').textContent = info.turno
-    ? '⭐ Turno planificado (según Horas Extras KIKA)'
-    : '';
+  document.getElementById('detalleTurno').textContent = info.turno ? '⭐ Turno planificado (según Horas Extras KIKA)' : '';
   document.getElementById('bloqueCorregir').style.display = 'none';
-  panel.style.display = 'block';
+  document.getElementById('detallePanel').style.display = 'block';
 }
 
 function mostrarDetalleFeriado(fecha, desc) {
   fechaSeleccionadaDetalle = null;
-  const panel = document.getElementById('detallePanel');
   document.getElementById('detalleTitulo').textContent = `🎉 ${fecha}`;
   document.getElementById('detalleEntrada').textContent = `Feriado: ${desc}`;
   document.getElementById('detalleSalida').textContent = '';
   document.getElementById('detalleTurno').textContent = 'No aplicaba marcaje.';
   document.getElementById('bloqueCorregir').style.display = 'none';
-  panel.style.display = 'block';
+  document.getElementById('detallePanel').style.display = 'block';
 }
 
 function cerrarDetalle() {
@@ -985,9 +821,13 @@ function llamarWebAppJSONP(url) {
   });
 }
 
-async function actualizarDesdeGmail(dias) {
-  if (WEB_APP_URL.startsWith('PEGA_AQUI') || !WEB_APP_URL) {
-    alert('⚠️ Falta configurar la URL del Web App.\n\nRevisa las instrucciones para publicar el script como Web App y pega la URL en el código (constante WEB_APP_URL).');
+/**
+ * Busca correos nuevos en Gmail. Si quedan pendientes, sigue sola
+ * (hasta 5 vueltas). silencioso=true: no cambia el aviso salvo al final.
+ */
+async function actualizarDesdeGmail(dias, silencioso) {
+  if (!WEB_APP_URL || WEB_APP_URL.startsWith('PEGA_AQUI')) {
+    alert('⚠️ Falta configurar la URL del Web App (constante WEB_APP_URL).');
     return;
   }
 
@@ -998,51 +838,39 @@ async function actualizarDesdeGmail(dias) {
   btn.disabled = true;
   btnRev.disabled = true;
   btn.textContent = '⏳ Buscando en Gmail...';
-  banner.className = 'estado-banner cargando';
-  banner.textContent = 'Buscando nuevos correos de marcaje en Gmail... esto puede tardar unos segundos.';
+  if (!silencioso) {
+    banner.className = 'estado-banner cargando';
+    banner.textContent = 'Buscando nuevos correos de marcaje en Gmail...';
+  }
 
   try {
-    const data = await llamarWebAppJSONP(`${WEB_APP_URL}?accion=actualizar${dias ? '&dias=' + dias : ''}`);
+    const url = `${WEB_APP_URL}?accion=actualizar${dias ? '&dias=' + dias : ''}`;
+    let data;
+    let vueltas = 0;
+    do {
+      data = await llamarWebAppJSONP(url);
+      vueltas++;
+    } while (data.success && data.pendientes && vueltas < 5);
 
     if (data.success) {
-      banner.className = 'estado-banner ok';
-      banner.textContent = '✓ ' + (data.mensaje || 'Búsqueda en Gmail completada.') + ' Recargando calendario...';
       await cargarMes();
-      if (banner.className.includes('ok')) banner.textContent = '✓ ' + (data.mensaje || 'Listo.');
-    } else {
+      if (!silencioso && banner.className.includes('ok')) banner.textContent = '✓ ' + (data.mensaje || 'Listo.');
+    } else if (!silencioso) {
       banner.className = 'estado-banner error';
       banner.textContent = '⚠️ ' + (data.mensaje || 'Error al actualizar');
+    } else {
+      console.warn('Sincronización automática con error:', data.mensaje);
     }
   } catch (e) {
-    banner.className = 'estado-banner error';
-    banner.textContent = '⚠️ ' + e.message;
+    if (!silencioso) {
+      banner.className = 'estado-banner error';
+      banner.textContent = '⚠️ ' + e.message;
+    }
     console.error(e);
   } finally {
     btn.disabled = false;
     btnRev.disabled = false;
     btn.textContent = '📧 Buscar en Gmail ahora';
-  }
-}
-
-async function cargarSaldos(anio) {
-  document.getElementById('saldosAnio').textContent = `(${anio})`;
-  const banner = document.getElementById('saldosBanner');
-  banner.style.display = 'none';
-
-  if (WEB_APP_URL.startsWith('PEGA_AQUI') || !WEB_APP_URL) return;
-
-  try {
-    const data = await llamarWebAppJSONP(`${WEB_APP_URL}?accion=saldos&anio=${anio}`);
-    if (data.success) {
-      document.getElementById('saldoAdminNum').textContent = data.admin;
-      document.getElementById('saldoVacNum').textContent = data.vacaciones;
-    }
-  } catch (e) {
-    document.getElementById('saldoAdminNum').textContent = '–';
-    document.getElementById('saldoVacNum').textContent = '–';
-    banner.className = 'estado-banner error';
-    banner.textContent = '⚠️ No se pudo cargar el saldo: ' + e.message;
-    banner.style.display = 'block';
   }
 }
 
@@ -1069,10 +897,7 @@ async function enviarSolicitud(event) {
   const fechaFinRaw = document.getElementById('solFechaFin').value || fechaInicioRaw;
   const notas = document.getElementById('solNotas').value;
 
-  if (!fechaInicioRaw) {
-    alert('Selecciona una fecha de inicio.');
-    return false;
-  }
+  if (!fechaInicioRaw) { alert('Selecciona una fecha de inicio.'); return false; }
 
   const fechaInicio = isoADDMMYYYY(fechaInicioRaw);
   const fechaFin = isoADDMMYYYY(fechaFinRaw);
@@ -1087,12 +912,9 @@ async function enviarSolicitud(event) {
   try {
     const params = new URLSearchParams({ accion: 'solicitar', tipo, fechaInicio, fechaFin, fraccion, notas });
     const data = await llamarWebAppJSONP(`${WEB_APP_URL}?${params.toString()}`);
-
     if (data.success) {
       banner.className = 'estado-banner ok';
       banner.textContent = '✓ ' + data.mensaje;
-      document.getElementById('saldoAdminNum').textContent = data.saldoAdmin;
-      document.getElementById('saldoVacNum').textContent = data.saldoVacaciones;
       document.getElementById('formSolicitud').reset();
       actualizarCamposSolicitud();
     } else {
@@ -1107,54 +929,8 @@ async function enviarSolicitud(event) {
     btn.textContent = '📩 Registrar solicitud';
   }
 
-  await cargarMes(); // refresca todo: calendario (colores nuevos), estadísticas, saldos y la lista
+  await cargarMes();
   return false;
-}
-
-/**
- * Trae las solicitudes del año y arma los rangos día por día de
- * Administrativo/Vacaciones (para pintar el calendario), además de
- * devolver la lista completa (para la tarjeta de Saldos y Solicitudes).
- * Una sola llamada al servidor sirve para ambas cosas.
- */
-async function cargarSolicitudesRangos(anio) {
-  administrativoMap = new Map();
-  vacacionesSet = new Set();
-
-  if (WEB_APP_URL.startsWith('PEGA_AQUI') || !WEB_APP_URL) return [];
-
-  try {
-    const data = await llamarWebAppJSONP(`${WEB_APP_URL}?accion=listarSolicitudes&anio=${anio}`);
-    if (!data.success || !data.solicitudes) return [];
-
-    data.solicitudes.forEach(s => {
-      const fin = s.fechaFin || s.fechaInicio;
-      const [d1, m1, a1] = s.fechaInicio.split('/').map(Number);
-      const [d2, m2, a2] = fin.split('/').map(Number);
-      let actual = new Date(a1, m1 - 1, d1);
-      const finDate = new Date(a2, m2 - 1, d2);
-      while (actual <= finDate) {
-        const fechaStr = `${String(actual.getDate()).padStart(2,'0')}/${String(actual.getMonth()+1).padStart(2,'0')}/${actual.getFullYear()}`;
-        const diaSemana = actual.getDay(); // 0=Dom, 6=Sáb
-        const esFeriado = feriadosMap.has(fechaStr);
-        // Solo se pinta el día como Administrativo/Vacaciones si es un día hábil real
-        // (ni fin de semana ni feriado) — igual que el backend cuenta los días descontados.
-        if (diaSemana !== 0 && diaSemana !== 6 && !esFeriado) {
-          if (s.tipo === 'Administrativo') {
-            administrativoMap.set(fechaStr, s.fraccion || '');
-          } else {
-            vacacionesSet.add(fechaStr);
-          }
-        }
-        actual.setDate(actual.getDate() + 1);
-      }
-    });
-
-    return data.solicitudes;
-  } catch (e) {
-    console.log('No se pudo cargar solicitudes:', e.message);
-    return [];
-  }
 }
 
 function renderizarListaSolicitudes(solicitudes) {
@@ -1180,14 +956,10 @@ function renderizarListaSolicitudes(solicitudes) {
   });
 }
 
-// Wrapper usado después de registrar/eliminar una solicitud (ahí sí hace
-// falta pedir los datos de nuevo, porque cambiaron).
+// Botón 🔄 de la lista: recarga todo el mes (una sola llamada).
 async function cargarListaSolicitudes() {
-  const cont = document.getElementById('listaSolicitudes');
-  cont.innerHTML = '<span style="color:#9ca3af;">Cargando...</span>';
-  const anio = fechaVista.getFullYear();
-  const solicitudes = await cargarSolicitudesRangos(anio);
-  renderizarListaSolicitudes(solicitudes);
+  document.getElementById('listaSolicitudes').innerHTML = '<span style="color:#9ca3af;">Cargando...</span>';
+  await cargarMes();
 }
 
 async function eliminarSolicitudUI(marcaTemporal) {
@@ -1204,9 +976,7 @@ async function eliminarSolicitudUI(marcaTemporal) {
     if (data.success) {
       banner.className = 'estado-banner ok';
       banner.textContent = '✓ ' + data.mensaje;
-      if (data.saldoAdmin !== undefined) document.getElementById('saldoAdminNum').textContent = data.saldoAdmin;
-      if (data.saldoVacaciones !== undefined) document.getElementById('saldoVacNum').textContent = data.saldoVacaciones;
-      await cargarMes(); // refresca todo: calendario (quita el color del día borrado), estadísticas, saldos y la lista
+      await cargarMes();
     } else {
       banner.className = 'estado-banner error';
       banner.textContent = '⚠️ ' + (data.mensaje || 'No se pudo eliminar');
@@ -1222,14 +992,10 @@ async function enviarLicencia(event) {
 
   const btn = document.getElementById('btnLicencia');
   const banner = document.getElementById('licenciaBanner');
-
   const fechaInicioRaw = document.getElementById('licFechaInicio').value;
   const fechaFinRaw = document.getElementById('licFechaFin').value || fechaInicioRaw;
 
-  if (!fechaInicioRaw) {
-    alert('Selecciona una fecha de inicio.');
-    return false;
-  }
+  if (!fechaInicioRaw) { alert('Selecciona una fecha de inicio.'); return false; }
 
   const fechaInicio = isoADDMMYYYY(fechaInicioRaw);
   const fechaFin = isoADDMMYYYY(fechaFinRaw);
@@ -1243,12 +1009,11 @@ async function enviarLicencia(event) {
   try {
     const params = new URLSearchParams({ accion: 'licencia', fechaInicio, fechaFin });
     const data = await llamarWebAppJSONP(`${WEB_APP_URL}?${params.toString()}`);
-
     if (data.success) {
       banner.className = 'estado-banner ok';
       banner.textContent = '✓ ' + data.mensaje;
       document.getElementById('formLicencia').reset();
-      await cargarMes(); // refresca el calendario para que se vea el color de la licencia recién agregada
+      await cargarMes();
     } else {
       banner.className = 'estado-banner error';
       banner.textContent = '⚠️ ' + (data.mensaje || 'Error al registrar la licencia');
@@ -1260,7 +1025,6 @@ async function enviarLicencia(event) {
     btn.disabled = false;
     btn.textContent = '🩺 Registrar licencia';
   }
-
   return false;
 }
 
@@ -1271,9 +1035,12 @@ function cambiarMes(delta) {
   cargarMes();
 }
 
-// Inicializar
+// Inicializar: muestra lo que hay y, si la última lectura de Gmail tiene
+// más de 15 minutos, busca correos nuevos en segundo plano.
 actualizarCamposSolicitud();
-cargarMes();
+cargarMes().then(() => {
+  if (Date.now() - ultimaSincronizacion > 15 * 60 * 1000) actualizarDesdeGmail(0, true);
+});
 </script>
 </body>
 </html>
