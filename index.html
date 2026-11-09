@@ -197,6 +197,7 @@
     <div style="text-align:center; margin-bottom:16px; display:flex; gap:10px; justify-content:center; flex-wrap:wrap;">
       <button class="refresh-btn" onclick="cargarMes()">🔄 Actualizar vista</button>
       <button class="refresh-btn gmail-btn" id="btnGmail" onclick="actualizarDesdeGmail()">📧 Buscar en Gmail ahora</button>
+      <button class="refresh-btn" id="btnRevisar" style="background:#6366f1;" onclick="actualizarDesdeGmail(60)">🔎 Revisar últimos 60 días</button>
     </div>
 
     <div id="estadoBanner" class="estado-banner cargando">Cargando datos desde Google Sheets...</div>
@@ -213,7 +214,7 @@
     </div>
     <div class="calendario" id="calendario"></div>
 
-    <div class="leyenda" style="display:none;">
+    <div class="leyenda">
       <div class="leyenda-item">
         <div class="leyenda-tickets"><div class="ticket verde"></div><div class="ticket verde"></div></div>
         <span>Jornada: Entrada + Salida OK</span>
@@ -329,7 +330,7 @@
       <button type="submit" class="refresh-btn" id="btnSolicitar" style="align-self:flex-start;">📩 Registrar solicitud</button>
     </form>
 
-    <div style="margin-top:20px; padding-top:16px; border-top:1px solid #e5e7eb; display:none;">
+    <div style="margin-top:20px; padding-top:16px; border-top:1px solid #e5e7eb;">
       <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
         <strong style="color:#1f2937; font-size:.9em;">Solicitudes registradas</strong>
         <button type="button" class="refresh-btn" style="padding:4px 10px; font-size:.75em;" onclick="cargarListaSolicitudes()">🔄</button>
@@ -338,7 +339,7 @@
     </div>
   </div>
 
-  <div class="card" style="display:none;">
+  <div class="card">
     <h2>🩺 Licencias Médicas</h2>
     <div id="licenciaBanner" class="estado-banner" style="display:none; margin-bottom:16px;"></div>
     <form class="form-solicitud" id="formLicencia" onsubmit="return enviarLicencia(event)">
@@ -539,6 +540,7 @@ async function cargarMes() {
     // de OTRA hoja, o la hoja de Alertas (ajena a este código) puede mezclar
     // fechas de varios meses — cualquier fila que no sea del mes pedido se ignora.
     let filasFueraDeMes = 0;
+    let filasValidasMes = 0;
     filas.forEach(fila => {
       const fecha = valorFechaCelda(fila[0]);
       if (!fecha) return;
@@ -547,6 +549,7 @@ async function cargarMes() {
       const mesFila = parseInt(partesFecha[1], 10) - 1;
       const anioFila = parseInt(partesFecha[2], 10);
       if (mesFila !== mesIdx || anioFila !== año) { filasFueraDeMes++; return; }
+      filasValidasMes++;
 
       const horaEntrada = (fila[2] || '').toString().trim();
       const horaSalida = (fila[3] || '').toString().trim();
@@ -567,7 +570,9 @@ async function cargarMes() {
     if (filasFueraDeMes > 0) {
       console.log(`Marcajes: se ignoraron ${filasFueraDeMes} fila(s) que no eran de ${nombreMes} ${año} (Google devolvió otra hoja o datos mezclados).`);
     }
-    huboMarcajes = true;
+    // Solo cuenta como "este mes tiene datos" si hay al menos una fila real del mes
+    // (si Google devolvió otra hoja, todas las filas se ignoran y no hay datos).
+    huboMarcajes = filasValidasMes > 0;
   } catch (e) {
     console.log('Sin hoja de Marcajes para este mes:', e.message);
   }
@@ -624,6 +629,28 @@ async function cargarMes() {
     }
     trackeadosLocal.add(fecha);
   });
+
+  // En un mes que SÍ tiene datos, un día hábil (lun-vie) ya pasado que no tiene
+  // ningún registro es un marcaje faltante: se muestra en rojo y se puede tocar
+  // para agregar la hora a mano. No aplica a feriados, licencias, días
+  // administrativos, vacaciones, fines de semana, hoy ni días futuros.
+  if (huboMarcajes) {
+    const hoyInicio = new Date();
+    hoyInicio.setHours(0, 0, 0, 0);
+    const diasEnElMes = new Date(año, mesIdx + 1, 0).getDate();
+    for (let d = 1; d <= diasEnElMes; d++) {
+      const f = new Date(año, mesIdx, d);
+      const dow = f.getDay();
+      if (dow === 0 || dow === 6) continue;
+      if (f >= hoyInicio) continue;
+      const fechaStr = `${String(d).padStart(2,'0')}/${String(mesIdx+1).padStart(2,'0')}/${año}`;
+      if (trackeadosLocal.has(fechaStr)) continue;
+      if (feriadosMap.has(fechaStr) || licenciasSet.has(fechaStr) ||
+          administrativoMap.has(fechaStr) || vacacionesSet.has(fechaStr)) continue;
+      datosLocal[fechaStr] = { entrada: false, salida: false, turno: false, tipoTurno: '', horasTurno: '', horaEntrada: '', horaSalida: '' };
+      trackeadosLocal.add(fechaStr);
+    }
+  }
 
   // Última verificación antes de comprometer los datos: si en el ínterin
   // se disparó una carga más nueva, esta se descarta completa (no pinta nada).
@@ -958,27 +985,30 @@ function llamarWebAppJSONP(url) {
   });
 }
 
-async function actualizarDesdeGmail() {
+async function actualizarDesdeGmail(dias) {
   if (WEB_APP_URL.startsWith('PEGA_AQUI') || !WEB_APP_URL) {
     alert('⚠️ Falta configurar la URL del Web App.\n\nRevisa las instrucciones para publicar el script como Web App y pega la URL en el código (constante WEB_APP_URL).');
     return;
   }
 
   const btn = document.getElementById('btnGmail');
+  const btnRev = document.getElementById('btnRevisar');
   const banner = document.getElementById('estadoBanner');
 
   btn.disabled = true;
+  btnRev.disabled = true;
   btn.textContent = '⏳ Buscando en Gmail...';
   banner.className = 'estado-banner cargando';
   banner.textContent = 'Buscando nuevos correos de marcaje en Gmail... esto puede tardar unos segundos.';
 
   try {
-    const data = await llamarWebAppJSONP(`${WEB_APP_URL}?accion=actualizar`);
+    const data = await llamarWebAppJSONP(`${WEB_APP_URL}?accion=actualizar${dias ? '&dias=' + dias : ''}`);
 
     if (data.success) {
       banner.className = 'estado-banner ok';
       banner.textContent = '✓ ' + (data.mensaje || 'Búsqueda en Gmail completada.') + ' Recargando calendario...';
       await cargarMes();
+      if (banner.className.includes('ok')) banner.textContent = '✓ ' + (data.mensaje || 'Listo.');
     } else {
       banner.className = 'estado-banner error';
       banner.textContent = '⚠️ ' + (data.mensaje || 'Error al actualizar');
@@ -989,6 +1019,7 @@ async function actualizarDesdeGmail() {
     console.error(e);
   } finally {
     btn.disabled = false;
+    btnRev.disabled = false;
     btn.textContent = '📧 Buscar en Gmail ahora';
   }
 }
